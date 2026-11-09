@@ -8,6 +8,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Tallaght Test Routes</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -395,6 +398,7 @@ function startSession(mode){
   $("pickView").hidden=true; $("driveView").hidden=false; $("sign").hidden=false; $("recenter").hidden=true;
   $("recenter").style.bottom = `calc(${$("sheet").offsetHeight}px + 12px)`;
   setVoiceBtn(); follow=true; keepAwake();
+  try{ const de=document.documentElement; if(!document.fullscreenElement && de.requestFullscreen) de.requestFullscreen({navigationUI:"hide"}).catch(()=>{}); }catch(e){}
   map.setZoom(17);
   say(`Route ${r.id}, ${r.name}. ${r.stops.length-2} stops.${mode==="sim"?" Rehearsal at three times speed.":""}`, true);
   if(mode==="sim"){
@@ -419,6 +423,7 @@ function endSession(){
   if(wakeLock){ wakeLock.release().catch(()=>{}); wakeLock=null; }
   if("speechSynthesis" in window) speechSynthesis.cancel();
   if(meMarker){ meMarker.remove(); meMarker=null; }
+  try{ if(document.fullscreenElement) document.exitFullscreen().catch(()=>{}); }catch(e){}
   S=null; $("sign").hidden=true; $("sign").classList.remove("off"); $("recenter").hidden=true;
   $("driveView").hidden=true; $("pickView").hidden=false; renderList();
   if(selected) drawRoute(selected);
