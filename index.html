@@ -1,0 +1,529 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#14171b">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Tallaght Test Routes</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout: full-screen night map, instruction sign pinned top, controls sheet pinned bottom.
+   Deliberately dark-only: it is used in a car, often after dark. */
+:root{
+  --asphalt:#14171b; --panel:#1d2228; --panel-2:#272e37; --line:#353e49;
+  --text:#eef1f4; --muted:#9ba6b2; --marking:#f2c230; --go:#3ccf7a; --warn:#ff6b4a;
+  --display:"Barlow Semi Condensed","Arial Narrow",system-ui,sans-serif;
+  --body:"Barlow",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --sl:max(10px,env(safe-area-inset-left,0px)); --sr:max(10px,env(safe-area-inset-right,0px));
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--asphalt);color:var(--text);font-family:var(--body);font-size:15px}
+body{overflow:hidden;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
+button:focus-visible{outline:2px solid var(--marking);outline-offset:2px}
+#map{position:fixed;inset:0;background:#0f1215}
+.leaflet-container{background:#0f1215;font-family:var(--body)}
+.leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.92) contrast(.88) saturate(.6)}
+.leaflet-control-attribution{background:rgba(20,23,27,.7)!important;color:var(--muted)!important;font-size:10px}
+.leaflet-control-attribution a{color:var(--muted)!important}
+
+/* Instruction sign */
+#sign{position:fixed;top:calc(env(safe-area-inset-top,0px) + 10px);left:var(--sl);right:var(--sr);z-index:1000;
+  display:flex;align-items:center;gap:14px;padding:12px 16px;border-radius:14px;
+  background:var(--panel);border:1px solid var(--line);box-shadow:0 8px 24px rgba(0,0,0,.45)}
+#sign[hidden]{display:none!important}
+#sign .icon{flex:0 0 52px;height:52px;display:grid;place-items:center;color:var(--marking)}
+#sign .icon svg{width:52px;height:52px;transition:transform .2s}
+#sign .txt{min-width:0;flex:1}
+#sign .dist{font-family:var(--display);font-weight:700;font-size:34px;line-height:1;font-variant-numeric:tabular-nums}
+#sign .instr{font-family:var(--display);font-weight:600;font-size:20px;line-height:1.15;margin-top:3px;text-wrap:balance}
+#sign.off{border-color:var(--warn)}
+#sign.off .icon,#sign.off .dist{color:var(--warn)}
+
+/* Bottom sheet */
+#sheet{position:fixed;left:0;right:0;bottom:0;z-index:1000;background:var(--panel);border-top:1px solid var(--line);
+  border-radius:18px 18px 0 0;padding:14px var(--sr) calc(env(safe-area-inset-bottom,0px) + 14px) var(--sl);
+  box-shadow:0 -10px 30px rgba(0,0,0,.4);max-height:62vh;overflow-y:auto}
+.head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:0 6px 10px}
+.head h1{font-family:var(--display);font-weight:700;font-size:22px;margin:0;letter-spacing:.01em}
+.head span{color:var(--muted);font-size:13px}
+.list{display:grid;gap:8px}
+.route{display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:10px 12px;border-radius:12px;background:var(--panel-2);border:1px solid transparent}
+.route.sel{border-color:var(--marking)}
+.badge{flex:0 0 38px;height:38px;border-radius:9px;display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:21px;color:#101317}
+.route .meta{min-width:0;flex:1}
+.route b{display:block;font-weight:600;font-size:16px}
+.route small{display:block;color:var(--muted);font-size:13px;margin-top:2px;font-variant-numeric:tabular-nums}
+.actions{display:flex;gap:8px;margin-top:12px}
+.btn{flex:1;padding:14px;border-radius:12px;font-family:var(--display);font-weight:700;font-size:18px;letter-spacing:.02em;text-transform:uppercase}
+.btn.primary{background:var(--marking);color:#14171b}
+.btn.ghost{background:var(--panel-2);border:1px solid var(--line)}
+.btn.danger{background:var(--panel-2);border:1px solid var(--warn);color:var(--warn)}
+.btn:disabled{opacity:.4}
+.voicerow{display:flex;align-items:center;gap:8px;margin-top:10px;padding:0 2px}
+.voicerow label{color:var(--muted);font-size:13px;text-transform:uppercase;letter-spacing:.08em;flex:0 0 auto;padding-left:4px}
+.voicerow select{flex:1;min-width:0;padding:11px 10px;border-radius:10px;background:var(--panel-2);color:var(--text);border:1px solid var(--line);font:inherit;font-size:14px}
+.btn.small{flex:0 0 auto;padding:11px 16px;font-size:15px}
+.note{color:var(--muted);font-size:12.5px;line-height:1.45;margin:12px 6px 0;max-width:65ch}
+
+/* Driving bar */
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.stat{background:var(--panel-2);border-radius:12px;padding:9px 10px;text-align:center}
+.stat .v{font-family:var(--display);font-weight:700;font-size:28px;line-height:1;font-variant-numeric:tabular-nums}
+.stat .l{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin-top:4px}
+.stat.fast .v{color:var(--warn)}
+#recenter{position:fixed;right:var(--sr);z-index:1000;width:48px;height:48px;border-radius:50%;background:var(--panel);
+  border:1px solid var(--line);display:grid;place-items:center;color:var(--marking);box-shadow:0 6px 18px rgba(0,0,0,.4)}
+#toast{position:fixed;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 96px);z-index:1100;
+  background:var(--panel-2);border:1px solid var(--line);padding:9px 14px;border-radius:999px;font-size:14px;max-width:90vw;text-align:center}
+
+/* Map markers */
+.stopmk{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:14px;
+  color:#101317;border:2px solid #101317;box-shadow:0 2px 6px rgba(0,0,0,.5)}
+.stopmk.done{opacity:.35}
+.stopmk.home{background:#fff!important;width:30px;height:30px;font-size:12px}
+.me{width:24px;height:24px}
+.me svg{width:24px;height:24px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.6))}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div id="map" aria-label="Map"></div>
+
+<div id="sign" hidden role="status" aria-live="polite">
+  <div class="icon" id="signIcon"></div>
+  <div class="txt"><div class="dist" id="signDist"></div><div class="instr" id="signInstr"></div></div>
+</div>
+
+<button id="recenter" hidden aria-label="Re-centre on my position">
+  <svg viewBox="0 0 24 24" width="24" height="24"><circle cx="12" cy="12" r="4" fill="currentColor"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+</button>
+<div id="toast" hidden></div>
+
+<div id="sheet">
+  <section id="pickView">
+    <div class="head"><h1>Tallaght Test Routes</h1><span id="loadState">Loading roads…</span></div>
+    <div class="list" id="routeList"></div>
+    <div class="actions">
+      <button class="btn ghost" id="rehearseBtn" disabled>Rehearse 3×</button>
+      <button class="btn primary" id="driveBtn" disabled>Drive</button>
+    </div>
+    <div class="voicerow">
+      <label for="voiceSel">Voice</label>
+      <select id="voiceSel"><option>Phone default</option></select>
+      <button class="btn ghost small" id="testVoice">Test</button>
+    </div>
+    <p class="note">Set everything up before you move off and mount the phone. The voice gives every direction, so you never need to touch the screen while driving. Keep this page open with the phone plugged in: GPS stops if the screen locks.</p>
+  </section>
+
+  <section id="driveView" hidden>
+    <div class="stats">
+      <div class="stat" id="spdBox"><div class="v" id="spd">–</div><div class="l">km/h</div></div>
+      <div class="stat"><div class="v" id="stopsDone">0/0</div><div class="l">Stops</div></div>
+      <div class="stat"><div class="v" id="left">–</div><div class="l">km left</div></div>
+    </div>
+    <div class="actions">
+      <button class="btn ghost" id="muteBtn">Voice on</button>
+      <button class="btn danger" id="endBtn">End</button>
+    </div>
+  </section>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+"use strict";
+// ---------- Route data (from the Reddit Google Maps links) ----------
+const TC = [53.2962914, -6.3621064];
+const ROUTES = [
+  {id:1, name:"Greenhills Rd & Tymon North", color:"#4cc3ff", stops:[
+    [53.2962975,-6.3620751,"RSA Test Centre"],[53.2950963,-6.3523194,"Hibernian Ind Est, Greenhills Rd"],[53.2903565,-6.3515160,"Bancroft Ave"],
+    [53.2972338,-6.3417816,"St Aongus' Cres"],[53.2969748,-6.3433914,"St Aongus' Rd"],[53.2951132,-6.3457197,"Tymon North Rd"],
+    [53.2989723,-6.3493368,"Tymonville Park"],[53.3006600,-6.3534107,"Parkview, Greenhills Rd"],[53.2962975,-6.3620751,"RSA Test Centre"]]},
+  {id:2, name:"Tymon estates & Main Road", color:"#ff8fb1", stops:[
+    [...TC,"RSA Test Centre"],[53.2989723,-6.3493368,"Tymonville Park"],[53.2946087,-6.3454121,"Tymon North Park"],
+    [53.2972194,-6.3469721,"Tymon North Rd"],[53.2953516,-6.3439535,"St Aongus' Rd"],[53.2958033,-6.3435479,"St Aongus' Park"],
+    [53.2896580,-6.3399669,"Main Road"],[53.2888789,-6.3443861,"Glenview Park"],[...TC,"RSA Test Centre"]]},
+  {id:3, name:"Redwood & Second Ave", color:"#b48cff", stops:[
+    [...TC,"RSA Test Centre"],[53.2982496,-6.3547223,"Stop 1"],[53.2980642,-6.3626553,"Redwood View"],[53.2988604,-6.3694194,"Redwood Ct"],
+    [53.2997926,-6.3744818,"Stop 4"],[53.2945415,-6.3803403,"Second Ave"],[53.2917570,-6.3686899,"Stop 6"],[...TC,"RSA Test Centre"]]},
+  {id:4, name:"Cookstown Way loop", color:"#3ccf7a", stops:[
+    [...TC,"RSA Test Centre"],[53.2889488,-6.3681593,"Stop 1"],[53.2904208,-6.3803343,"Cookstown Way"],[53.2962333,-6.3753246,"Stop 3"],
+    [53.3002944,-6.3735810,"Stop 4"],[53.2993537,-6.3667449,"Stop 5"],[53.2995039,-6.3669914,"Stop 6"],[53.3002374,-6.3637838,"Stop 7"],
+    [53.2965188,-6.3619808,"RSA Test Centre"]]},
+  {id:5, name:"Northern loop", color:"#ffb347", stops:[
+    [53.2962975,-6.3620751,"RSA Test Centre"],[53.3013517,-6.3544097,"Stop 1"],[53.3030459,-6.3549189,"Stop 2"],[53.3022714,-6.3661250,"Stop 3"],
+    [53.2984777,-6.3667088,"Stop 4"],[53.3005485,-6.3533227,"Stop 5"],[53.3000198,-6.3500441,"Stop 6"],[53.2977601,-6.3472784,"Stop 7"],
+    [53.2993215,-6.3459759,"Stop 8"],[53.2976557,-6.3609269,"Broomhill Rd (finish)"]]},
+];
+
+// ---------- Small helpers ----------
+const $ = id => document.getElementById(id);
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+};
+const LAT0 = 53.296, LON0 = -6.36, RE = 6371000, KX = Math.PI/180*RE*Math.cos(LAT0*Math.PI/180), KY = Math.PI/180*RE;
+const xy = (lat, lon) => ({x:(lon-LON0)*KX, y:(lat-LAT0)*KY});
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function toast(msg, ms=2600){ const t=$("toast"); t.textContent=msg; t.hidden=false; clearTimeout(toast._t); toast._t=setTimeout(()=>t.hidden=true, ms); }
+function fmtDist(m){ if(m>=1000) return (m/1000).toFixed(1)+" km"; if(m>=100) return Math.round(m/10)*10+" m"; return Math.max(0,Math.round(m/5)*5)+" m"; }
+function spokenDist(m){ if(m>=1000) return (m/1000).toFixed(1).replace(/\.0$/,"")+" kilometres"; return (Math.round(m/50)*50)+" metres"; }
+
+// ---------- Geometry ----------
+function buildGeom(route, coords){            // coords: [[lon,lat],...]
+  route.pts = coords.map(([lon,lat]) => ({lat, lon, ...xy(lat,lon)}));
+  route.cum = [0];
+  for(let i=1;i<route.pts.length;i++){
+    const a=route.pts[i-1], b=route.pts[i];
+    route.cum.push(route.cum[i-1] + Math.hypot(b.x-a.x, b.y-a.y));
+  }
+  route.total = route.cum[route.cum.length-1];
+}
+function projectSeg(route, p, i){
+  const a=route.pts[i], b=route.pts[i+1], dx=b.x-a.x, dy=b.y-a.y, L2=dx*dx+dy*dy;
+  const t = L2 ? Math.max(0, Math.min(1, ((p.x-a.x)*dx + (p.y-a.y)*dy)/L2)) : 0;
+  const px=a.x+t*dx, py=a.y+t*dy;
+  return {d:Math.hypot(p.x-px, p.y-py), along:route.cum[i] + t*Math.sqrt(L2), seg:i};
+}
+// Nearest point on the route between two segment indexes. Earlier segments win near-ties,
+// so roads the route drives twice resolve to the next pass, not a later one.
+function nearest(route, p, from, to, stopBelow){
+  let best=null; const n=route.pts.length-2;
+  for(let i=Math.max(0,from); i<=Math.min(n,to); i++){
+    const r=projectSeg(route,p,i);
+    if(!best || r.d < best.d - 0.5) best=r;
+    if(stopBelow && r.d < stopBelow) return r;
+  }
+  return best;
+}
+function pointAt(route, along){
+  const c=route.cum; let lo=0, hi=c.length-1;
+  along=Math.max(0, Math.min(route.total, along));
+  while(hi-lo>1){ const m=(lo+hi)>>1; if(c[m]<=along) lo=m; else hi=m; }
+  const a=route.pts[lo], b=route.pts[Math.min(lo+1,route.pts.length-1)], seg=(c[hi]-c[lo])||1, t=(along-c[lo])/seg;
+  return {lat:a.lat+(b.lat-a.lat)*t, lon:a.lon+(b.lon-a.lon)*t, heading:(Math.atan2(b.x-a.x, b.y-a.y)*180/Math.PI+360)%360};
+}
+
+// ---------- Turn instructions from OSRM steps ----------
+const MOD_DEG = {"straight":0,"slight right":40,"right":90,"sharp right":135,"uturn":180,"sharp left":-135,"left":-90,"slight left":-40};
+const TURN_WORD = {"left":"Turn left","right":"Turn right","slight left":"Bear left","slight right":"Bear right","sharp left":"Turn sharp left","sharp right":"Turn sharp right","straight":"Go straight on","uturn":"Make a U-turn"};
+const ord = n => n + (["th","st","nd","rd"][(n%100>10&&n%100<14)?0:(n%10)]||"th");
+function describe(step, isFinal){
+  const m=step.maneuver, mod=m.modifier||"straight", nm=step.name||step.ref||"", onto=nm?` onto ${nm}`:"";
+  switch(m.type){
+    case "depart": return {text:`Head off${nm?" along "+nm:""}`, icon:"arrow", deg:0};
+    case "arrive": return isFinal ? {text:"Finish: you're back at the end of the route", icon:"flag"} : null;
+    case "roundabout": case "rotary":
+      return m.exit ? {text:`At the roundabout, take the ${ord(m.exit)} exit${onto}`, icon:"rb", exit:m.exit}
+                    : {text:`Go through the roundabout${onto}`, icon:"rb", exit:""};
+    case "roundabout turn": return {text:`At the roundabout, ${(TURN_WORD[mod]||"continue").toLowerCase()}${onto}`, icon:"rb", exit:""};
+    case "exit roundabout": case "exit rotary": return null;
+    case "turn": case "end of road": return {text:`${TURN_WORD[mod]||"Continue"}${onto}`, icon:"arrow", deg:MOD_DEG[mod]||0};
+    case "fork": return {text:`Keep ${mod.replace("slight ","")}${onto}`, icon:"arrow", deg:MOD_DEG[mod]||0};
+    case "merge": return {text:`Merge ${mod.replace("slight ","")}${onto}`, icon:"arrow", deg:MOD_DEG[mod]||0};
+    case "on ramp": case "off ramp": return {text:`Take the slip road ${mod.replace("slight ","")}${onto}`, icon:"arrow", deg:MOD_DEG[mod]||0};
+    case "new name": case "continue": case "notification":
+      if(mod==="straight") return null;   // nothing to do at the wheel
+      return {text:`${TURN_WORD[mod]||"Continue"}${onto}`, icon:"arrow", deg:MOD_DEG[mod]||0};
+    default: return mod==="straight" ? null : {text:`${TURN_WORD[mod]||"Continue"}${onto}`, icon:"arrow", deg:MOD_DEG[mod]||0};
+  }
+}
+function iconSvg(ins){
+  if(!ins) return "";
+  if(ins.icon==="rb") return `<svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="13" fill="none" stroke="currentColor" stroke-width="5"/><text x="24" y="30" text-anchor="middle" font-size="17" font-weight="700" font-family="Barlow Semi Condensed,sans-serif" fill="currentColor">${ins.exit||""}</text></svg>`;
+  if(ins.icon==="flag") return `<svg viewBox="0 0 48 48"><path d="M12 6v36" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path d="M14 8h22l-5 7 5 7H14z" fill="currentColor"/></svg>`;
+  if(ins.icon==="warn") return `<svg viewBox="0 0 48 48"><path d="M24 6 44 40H4z" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><path d="M24 18v10" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><circle cx="24" cy="34" r="2.5" fill="currentColor"/></svg>`;
+  return `<svg viewBox="0 0 48 48" style="transform:rotate(${ins.deg||0}deg)"><path d="M24 4 39 21H29v23H19V21H9z" fill="currentColor"/></svg>`;
+}
+
+function prepareSteps(route, osrm){
+  route.steps=[]; let seg=0;
+  const legs=osrm.legs||[];
+  legs.forEach((leg, li) => leg.steps.forEach(step => {
+    const t=step.maneuver.type;
+    if(t==="depart" && li>0) return;
+    const ins=describe(step, li===legs.length-1);
+    if(!ins) return;
+    const [lon,lat]=step.maneuver.location;
+    const r=nearest(route, xy(lat,lon), seg, route.pts.length, 2);
+    seg=r.seg; route.steps.push({...ins, along:r.along});
+  }));
+  // Where each stop sits along the line (for the "stops passed" counter and markers)
+  seg=0;
+  route.stopAlong=(osrm.waypoints||[]).map(w => { const r=nearest(route, xy(w.location[1], w.location[0]), seg, route.pts.length, 3); seg=r.seg; return r.along; });
+}
+
+// ---------- Load road geometry (OSRM, cached on the phone) ----------
+const CACHE_V = "ttr-osrm-v1-";
+async function loadRoute(route){
+  let data = store.get(CACHE_V+route.id, null);
+  if(!data){
+    const coords = route.stops.map(s => `${s[1]},${s[0]}`).join(";");
+    const url = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=true`;
+    const res = await fetch(url);
+    if(!res.ok) throw new Error("routing "+res.status);
+    const j = await res.json();
+    if(j.code!=="Ok" || !j.routes || !j.routes.length) throw new Error(j.code||"no route");
+    data = {route:j.routes[0], waypoints:j.waypoints};
+    store.set(CACHE_V+route.id, data);
+  }
+  buildGeom(route, data.route.geometry.coordinates);
+  prepareSteps(route, {legs:data.route.legs, waypoints:data.waypoints});
+  route.ok = true;
+}
+function fallbackRoute(route){        // straight lines between stops if routing is unreachable
+  buildGeom(route, route.stops.map(s => [s[1], s[0]]));
+  route.steps = route.stops.slice(1).map((s,i,arr) => ({text: i===arr.length-1 ? "Finish" : `Head to stop ${i+1}: ${s[2]}`, icon: i===arr.length-1?"flag":"arrow", deg:0, along: route.cum[i+1]}));
+  route.stopAlong = route.stops.map((s,i) => route.cum[i]);
+  route.ok = false;
+}
+
+// ---------- Map ----------
+const map = L.map("map", {zoomControl:false, attributionControl:true}).setView(TC, 15);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {maxZoom:19, subdomains:"abc",
+  attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · routing OSRM'}).addTo(map);
+let routeLayer=null, doneLayer=null, stopMarkers=[], meMarker=null;
+
+function drawRoute(route){
+  if(routeLayer) routeLayer.remove(); if(doneLayer) doneLayer.remove();
+  stopMarkers.forEach(m=>m.remove()); stopMarkers=[];
+  const latlngs = route.pts.map(p => [p.lat, p.lon]);
+  routeLayer = L.layerGroup([
+    L.polyline(latlngs, {color:"#0b0d10", weight:11, opacity:.7, lineJoin:"round"}),
+    L.polyline(latlngs, {color:route.color, weight:6, opacity:1, lineJoin:"round"})
+  ]).addTo(map);
+  doneLayer = L.polyline([], {color:"#5d6670", weight:6, opacity:1, lineJoin:"round"}).addTo(map);
+  route.stops.forEach((s,i) => {
+    const first=i===0, last=i===route.stops.length-1;
+    if(last && Math.hypot(s[0]-route.stops[0][0], s[1]-route.stops[0][1]) < 0.0004) return;
+    const label = first ? "START" : last ? "END" : String(i);
+    const icon = L.divIcon({className:"", iconSize:[30,30], iconAnchor:[15,15],
+      html:`<div class="stopmk ${first||last?"home":""}" style="background:${route.color}">${label}</div>`});
+    stopMarkers.push(L.marker([s[0],s[1]], {icon, keyboard:false}).bindPopup(esc(s[2])).addTo(map));
+  });
+  map.fitBounds(routeLayer.getLayers()[1].getBounds(), {paddingTopLeft:[30,30], paddingBottomRight:[30, $("sheet").offsetHeight+20]});
+}
+function meIcon(heading){
+  return L.divIcon({className:"me", iconSize:[24,24], iconAnchor:[12,12], html: heading==null
+    ? `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="#4c8dff" stroke="#fff" stroke-width="3"/></svg>`
+    : `<svg viewBox="0 0 24 24" style="transform:rotate(${heading}deg)"><path d="M12 2 20 21 12 16 4 21z" fill="#4c8dff" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg>`});
+}
+
+// ---------- Route picker ----------
+let selected=null;
+const log = store.get("ttr-log", {});
+function renderList(){
+  $("routeList").innerHTML = ROUTES.map(r => {
+    const n = (log[r.id]||[]).length, km = r.total ? (r.total/1000).toFixed(1)+" km" : "…";
+    return `<button class="route ${selected===r?"sel":""}" data-id="${r.id}">
+      <span class="badge" style="background:${r.color}">${r.id}</span>
+      <span class="meta"><b>${esc(r.name)}</b><small>${r.stops.length-2} stops · ${km}${r.ok===false?" · straight lines only":""} · driven ${n}×</small></span></button>`;
+  }).join("");
+}
+$("routeList").addEventListener("click", e => {
+  const b = e.target.closest(".route"); if(!b) return;
+  selected = ROUTES.find(r => r.id===+b.dataset.id);
+  store.set("ttr-last", selected.id);
+  renderList(); if(selected.pts) drawRoute(selected);
+  $("driveBtn").disabled = $("rehearseBtn").disabled = !selected.pts;
+});
+
+// ---------- Voice ----------
+let voiceOn = store.get("ttr-voice", true), voice=null, voiceList=[];
+// Rank the phone's voices: natural/neural/enhanced ones first, Irish and British accents next.
+function voiceScore(v){
+  let s=0; const n=v.name;
+  if(/natural|neural|premium|enhanced|wavenet|online/i.test(n)) s+=10;
+  if(/google/i.test(n)) s+=4;
+  if(!v.localService) s+=2;
+  if(/en[-_]IE/i.test(v.lang)) s+=4; else if(/en[-_]GB/i.test(v.lang)) s+=3; else if(/en[-_](AU|NZ)/i.test(v.lang)) s+=1;
+  if(/compact|espeak|robot|novelty|whisper|zarvox|bells|trinoids|bad news|good news|bubbles|cellos|jester|organ|superstar|bahh|boing|albert|fred|junior|ralph|kathy/i.test(n)) s-=20;
+  return s;
+}
+function pickVoice(){
+  voiceList = speechSynthesis.getVoices().filter(v => /^en/i.test(v.lang)).sort((a,b) => voiceScore(b)-voiceScore(a));
+  const saved = store.get("ttr-voiceURI", null);
+  voice = voiceList.find(v => v.voiceURI===saved) || voiceList[0] || null;
+  const sel = $("voiceSel");
+  sel.innerHTML = voiceList.length
+    ? voiceList.map(v => `<option value="${esc(v.voiceURI)}">${esc(v.name.replace(/^(Microsoft|Google|Apple)\s+/,""))} · ${esc(v.lang)}</option>`).join("")
+    : `<option>Phone default</option>`;
+  if(voice) sel.value = voice.voiceURI;
+}
+if("speechSynthesis" in window){ pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
+$("voiceSel").onchange = e => { voice = voiceList.find(v => v.voiceURI===e.target.value) || voice; store.set("ttr-voiceURI", voice && voice.voiceURI); };
+$("testVoice").onclick = () => { const was=voiceOn; voiceOn=true; say("In about 200 metres, at the roundabout, take the 2nd exit onto Greenhills Rd.", true); voiceOn=was; };
+
+// Turn map shorthand into what a person would say out loud.
+const ORD_WORDS = ["","first","second","third","fourth","fifth","sixth","seventh","eighth"];
+const ABBR = [[/\bInd Est\b/g,"Industrial Estate"],[/\bRd\b/g,"Road"],[/\bAve\b/g,"Avenue"],[/\bCres\b/g,"Crescent"],[/\bCt\b/g,"Court"],
+  [/\bDr\b/g,"Drive"],[/\bPk\b/g,"Park"],[/\bGrv\b/g,"Grove"],[/\bSq\b/g,"Square"],[/\bLwr\b/g,"Lower"],[/\bUpr\b/g,"Upper"],
+  [/\bSt\b(?=\s+[A-Z])/g,"Saint"],[/\bSt\b/g,"Street"],[/\bN\b/g,"North"],[/\bS\b/g,"South"],[/\bE\b/g,"East"],[/\bW\b/g,"West"]];
+function spoken(text){
+  let t = text.replace(/\b(\d)(st|nd|rd|th)\b/g, (m,d) => ORD_WORDS[+d] || m);
+  ABBR.forEach(([re,w]) => t = t.replace(re, w));
+  t = t.replace(/\b([RNM])(\d)(\d)(\d)\b/g, "$1 $2 $3 $4").replace(/\b([RNM])(\d{1,2})\b/g, "$1 $2");  // R113 -> "R 1 1 3", like people say it
+  return t;
+}
+function say(text, urgent){
+  if(!voiceOn || !("speechSynthesis" in window)) return;
+  if(urgent) speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(spoken(text));
+  if(voice){ u.voice=voice; u.lang=voice.lang; } else u.lang="en-IE";
+  u.rate = 0.96; u.pitch = 1;
+  speechSynthesis.speak(u);
+}
+function setVoiceBtn(){ $("muteBtn").textContent = voiceOn ? "Voice on" : "Voice off"; }
+$("muteBtn").onclick = () => { voiceOn=!voiceOn; store.set("ttr-voice", voiceOn); setVoiceBtn(); if(!voiceOn) speechSynthesis.cancel(); };
+
+// ---------- Driving session ----------
+let S=null, watchId=null, simTimer=null, wakeLock=null, follow=true;
+
+async function keepAwake(){ try{ if("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); }catch(e){} }
+document.addEventListener("visibilitychange", () => { if(S && document.visibilityState==="visible") keepAwake(); });
+
+function startSession(mode){
+  const r = selected; if(!r || !r.pts) return;
+  S = {route:r, mode, seg:0, progress:0, off:0, offSaid:false, said:{}, startedAt:Date.now(), finished:false, lastFix:null};
+  $("pickView").hidden=true; $("driveView").hidden=false; $("sign").hidden=false; $("recenter").hidden=true;
+  $("recenter").style.bottom = `calc(${$("sheet").offsetHeight}px + 12px)`;
+  setVoiceBtn(); follow=true; keepAwake();
+  map.setZoom(17);
+  say(`Route ${r.id}, ${r.name}. ${r.stops.length-2} stops.${mode==="sim"?" Rehearsal at three times speed.":""}`, true);
+  if(mode==="sim"){
+    let along=0; const speed=3*11; // 3x a steady 40 km/h
+    simTimer = setInterval(() => {
+      along += speed*0.25;
+      const p = pointAt(r, along);
+      onFix({lat:p.lat, lon:p.lon, heading:p.heading, speed:11, acc:5});
+      if(along >= r.total) { clearInterval(simTimer); simTimer=null; }
+    }, 250);
+  } else {
+    if(!("geolocation" in navigator)){ toast("This browser has no GPS access."); return; }
+    watchId = navigator.geolocation.watchPosition(
+      pos => onFix({lat:pos.coords.latitude, lon:pos.coords.longitude, heading:pos.coords.heading, speed:pos.coords.speed, acc:pos.coords.accuracy}),
+      err => { toast(err.code===1 ? "Location is blocked. Allow location for this site in your browser settings." : "Waiting for GPS signal…", 4000); },
+      {enableHighAccuracy:true, maximumAge:1000, timeout:15000});
+  }
+}
+function endSession(){
+  if(watchId!=null) navigator.geolocation.clearWatch(watchId); watchId=null;
+  if(simTimer) clearInterval(simTimer); simTimer=null;
+  if(wakeLock){ wakeLock.release().catch(()=>{}); wakeLock=null; }
+  if("speechSynthesis" in window) speechSynthesis.cancel();
+  if(meMarker){ meMarker.remove(); meMarker=null; }
+  S=null; $("sign").hidden=true; $("sign").classList.remove("off"); $("recenter").hidden=true;
+  $("driveView").hidden=true; $("pickView").hidden=false; renderList();
+  if(selected) drawRoute(selected);
+}
+$("driveBtn").onclick = () => startSession("gps");
+$("rehearseBtn").onclick = () => startSession("sim");
+$("endBtn").onclick = endSession;
+map.on("dragstart", () => { if(S){ follow=false; $("recenter").hidden=false; } });
+$("recenter").onclick = () => { follow=true; $("recenter").hidden=true; if(S && S.lastFix) map.setView([S.lastFix.lat,S.lastFix.lon], Math.max(map.getZoom(),16)); };
+
+function showSign(ins, distText, off){
+  $("signIcon").innerHTML = iconSvg(ins); $("signDist").textContent = distText; $("signInstr").textContent = ins ? ins.text : "";
+  $("sign").classList.toggle("off", !!off);
+}
+
+function onFix(f){
+  if(!S) return;
+  const r=S.route, p=xy(f.lat,f.lon);
+  // heading: use GPS heading when moving, else derive from last fix
+  let hdg = (f.heading!=null && !isNaN(f.heading) && (f.speed||0)>1) ? f.heading : null;
+  if(hdg==null && S.lastFix){ const q=xy(S.lastFix.lat,S.lastFix.lon), d=Math.hypot(p.x-q.x,p.y-q.y); if(d>4) hdg=(Math.atan2(p.x-q.x,p.y-q.y)*180/Math.PI+360)%360; }
+  S.lastFix = {lat:f.lat, lon:f.lon};
+  if(!meMarker) meMarker = L.marker([f.lat,f.lon], {icon:meIcon(hdg), zIndexOffset:1000, keyboard:false}).addTo(map);
+  else { meMarker.setLatLng([f.lat,f.lon]); meMarker.setIcon(meIcon(hdg)); }
+  if(follow) map.panTo([f.lat,f.lon], {animate:true, duration:.4});
+
+  // speed
+  const kmh = f.speed!=null && f.speed>=0 ? Math.round(f.speed*3.6) : null;
+  $("spd").textContent = kmh==null ? "–" : kmh;
+  $("spdBox").classList.toggle("fast", kmh!=null && kmh>52);
+
+  // where am I on the route?
+  let m = nearest(r, p, S.seg-3, S.seg+150);
+  if(m.d > 40){ const g = nearest(r, p, S.seg, r.pts.length); if(g.d < m.d) m = g; }
+  const notStarted = S.progress < 30 && m.d > 60;
+  if(notStarted){
+    const d0 = Math.hypot(p.x-r.pts[0].x, p.y-r.pts[0].y);
+    showSign({icon:"flag"}, fmtDist(d0), false); $("signInstr").textContent = "Drive to the start of the route";
+    updateStats(); return;
+  }
+  if(m.d > 45){
+    S.off++;
+    if(S.off>=3){
+      showSign({icon:"warn"}, "Off route", true);
+      $("signInstr").textContent = `The route is ${fmtDist(m.d)} away. Rejoin when it's safe.`;
+      if(!S.offSaid){ say("You are off the route. Rejoin when it is safe.", true); S.offSaid=true; }
+      updateStats(); return;
+    }
+  } else {
+    if(S.off>=3) say("Back on the route.", true);
+    S.off=0; S.offSaid=false; S.seg=m.seg; S.progress=Math.max(S.progress, m.along);
+  }
+  doneLayer.setLatLngs(r.pts.slice(0, S.seg+1).map(q=>[q.lat,q.lon]).concat([[f.lat,f.lon]]));
+
+  // next instruction
+  const idx = r.steps.findIndex(s => s.along > S.progress + 4);
+  if(idx<0 || (S.progress > r.total-25)){ finish(); return; }
+  const step = r.steps[idx], dist = step.along - S.progress;
+  showSign(step, fmtDist(dist), false);
+  const k = S.said[idx] || (S.said[idx] = {});
+  const prevAlong = idx>0 ? r.steps[idx-1].along : 0;
+  const lc = t => t.charAt(0).toLowerCase() + t.slice(1);
+  if(!k.far && dist <= 220 && dist > 70 && (step.along - prevAlong) > 260){ k.far=true; say(`In about ${spokenDist(dist)}, ${lc(step.text)}.`); }
+  if(!k.near && dist <= 45){
+    k.near=k.far=true;
+    const next = r.steps[idx+1], soon = next && (next.along - step.along) < 120 && next.icon!=="flag";
+    const now = step.icon==="flag" ? "That's it, you've reached the end of the route." : `${step.icon==="rb" ? "" : "Now, "}${step.icon==="rb" ? step.text : lc(step.text)}.`;
+    say(soon ? `${now} Then straight after, ${lc(next.text)}.` : now, true);
+    if(soon) (S.said[idx+1] = S.said[idx+1] || {}).far = true;
+  }
+  updateStats();
+}
+function updateStats(){
+  const r=S.route, inner=(r.stopAlong||[]).slice(1,-1);
+  const passed = inner.filter(a => a <= S.progress + 15).length;
+  $("stopsDone").textContent = `${passed}/${inner.length}`;
+  $("left").textContent = Math.max(0,(r.total-S.progress)/1000).toFixed(1);
+  stopMarkers.forEach((mk,i) => { const el = mk.getElement && mk.getElement(); if(el){ const a=r.stopAlong[i]; el.firstChild && el.firstChild.classList.toggle("done", i>0 && a!=null && a <= S.progress+15 && i<r.stops.length-1); } });
+}
+function finish(){
+  if(S.finished) return; S.finished=true;
+  const mins = Math.round((Date.now()-S.startedAt)/60000);
+  showSign({icon:"flag"}, "Done", false);
+  $("signInstr").textContent = S.mode==="sim" ? "Rehearsal finished" : `Route ${S.route.id} complete in ${mins} min`;
+  say(S.mode==="sim" ? "Rehearsal finished." : `Route complete. Well done.`, true);
+  if(S.mode!=="sim"){
+    (log[S.route.id] = log[S.route.id]||[]).push({date:new Date().toISOString(), mins});
+    store.set("ttr-log", log);
+  }
+  if(watchId!=null){ navigator.geolocation.clearWatch(watchId); watchId=null; }
+}
+
+// ---------- Boot ----------
+(async function boot(){
+  selected = ROUTES.find(r => r.id===store.get("ttr-last", 1)) || ROUTES[0];
+  renderList();
+  let failed=0;
+  for(const r of ROUTES){
+    try{ await loadRoute(r); }catch(e){ failed++; fallbackRoute(r); }
+    renderList();
+    if(r===selected){ drawRoute(r); $("driveBtn").disabled=$("rehearseBtn").disabled=false; }
+  }
+  $("loadState").textContent = failed ? "Some routes offline" : "5 routes ready";
+  if(failed) toast("Couldn't reach the road router, so some routes show straight lines. Reload when you have signal.", 5000);
+})();
+</script>
+</body>
+</html>
