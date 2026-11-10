@@ -314,12 +314,15 @@ map.attributionControl.setPrefix(false);
 let baseLayer=null;
 function applyMapStyle(){
   if(baseLayer) baseLayer.remove();
-  const st = settings.mapStyle;
-  const carto = s => L.tileLayer(`https://{s}.basemaps.cartocdn.com/${s}/{z}/{x}/{y}{r}.png`, {maxZoom:20, subdomains:"abcd",
-    attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/attributions">CARTO</a>'});
+  const st = settings.mapStyle, k = ttKey();
+  // With a TomTom key: TomTom's own day/night map. Without one: OpenStreetMap (darkened for the dark style).
+  const tomtom = s => L.tileLayer(`https://{s}.api.tomtom.com/map/1/tile/basic/${s==="night"?"night":"main"}/{z}/{x}/{y}.png?key=${encodeURIComponent(k)}&tileSize=256&view=Unified`,
+    {maxZoom:20, subdomains:"abcd", className: s==="night" ? "base-night" : "", attribution:'© <a href="https://www.tomtom.com/" target="_blank" rel="noopener">TomTom</a>'});
+  const osm = dark => L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    {maxZoom:20, maxNativeZoom:19, className: dark ? "base-osm-dark" : "", attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'});
   baseLayer = st==="sat"
     ? L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {maxZoom:19, maxNativeZoom:18, attribution:"Imagery © Esri"})
-    : carto(st==="light" ? "rastertiles/voyager" : "dark_all");
+    : k ? tomtom(st==="light" ? "main" : "night") : osm(st!=="light");
   baseLayer.addTo(map);
   document.body.dataset.map = st;
   document.querySelectorAll("#mapStyle button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.style===st)));
@@ -444,7 +447,50 @@ function showTab(tb){
   refreshMap();
 }
 $("tabs").addEventListener("click", e => { const b=e.target.closest("[data-tab]"); if(b) showTab(b.dataset.tab); });
-$("grab").onclick = () => $("sheet").classList.toggle("collapsed");
+// Bottom sheet: tap the handle to toggle; swipe it (or the panel when scrolled to the top) down to close and up to open.
+(function sheetGestures(){
+  const sh=$("sheet"), panes=$("panes"), grab=$("grab"), tabs=$("tabs");
+  let y0=null, dy=0, dragging=false, fromPanes=false, moved=false, skipClick=false;
+  const collapsed = () => sh.classList.contains("collapsed");
+  function start(y, src){ if(document.body.classList.contains("driving")) return; y0=y; dy=0; moved=false; fromPanes = src==="panes"; dragging = !fromPanes; }
+  function move(y, e){
+    if(y0==null) return;
+    let d = y - y0;
+    if(fromPanes && !dragging){
+      if(panes.scrollTop<=0 && d>10){ dragging=true; y0=y; d=0; }       // pulling down from the top of the list
+      else if(Math.abs(d)>10){ y0=null; return; }                        // normal scrolling
+      else return;
+    }
+    if(!dragging) return;
+    if(e && e.cancelable) e.preventDefault();
+    dy = collapsed() ? Math.min(0, d) : Math.max(0, d);
+    if(Math.abs(d) > 6) moved = true;
+    sh.style.transition = "none";
+    sh.style.transform = `translateY(${collapsed() ? Math.max(dy, -80)*0.4 : dy}px)`;
+  }
+  function end(){
+    if(y0==null && !dragging) return;
+    const wasMoved = dragging && moved;
+    if(wasMoved){
+      if(!collapsed() && dy > 70){ sh.style.transition="transform .2s ease"; sh.style.transform=`translateY(${sh.offsetHeight}px)`; setTimeout(() => { sh.classList.add("collapsed"); sh.style.transition="none"; sh.style.transform=""; requestAnimationFrame(() => sh.style.transition=""); }, 190); }
+      else if(collapsed() && dy < -25){ sh.style.transition=""; sh.style.transform=""; sh.classList.remove("collapsed"); }
+      else { sh.style.transition="transform .2s ease"; sh.style.transform=""; setTimeout(() => sh.style.transition="", 220); }
+      skipClick = true; setTimeout(() => skipClick=false, 350);
+    } else { sh.style.transition=""; sh.style.transform=""; }
+    y0=null; dragging=false; dy=0;
+  }
+  [grab, tabs].forEach(el => {
+    el.addEventListener("pointerdown", e => { if(e.pointerType==="mouse" && e.button!==0) return; start(e.clientY, "grab"); });
+  });
+  window.addEventListener("pointermove", e => { if(y0!=null && !fromPanes) move(e.clientY, e); });
+  window.addEventListener("pointerup", () => { if(!fromPanes) end(); });
+  window.addEventListener("pointercancel", () => { if(!fromPanes) end(); });
+  panes.addEventListener("touchstart", e => start(e.touches[0].clientY, "panes"), {passive:true});
+  panes.addEventListener("touchmove", e => move(e.touches[0].clientY, e), {passive:false});
+  panes.addEventListener("touchend", end); panes.addEventListener("touchcancel", end);
+  grab.addEventListener("click", () => { if(!skipClick) sh.classList.toggle("collapsed"); });
+  tabs.addEventListener("click", e => { if(skipClick){ e.stopPropagation(); e.preventDefault(); } }, true);
+})();
 map.on("click", () => { if(!S && $("sheet").offsetHeight > window.innerHeight*0.45) $("sheet").classList.add("collapsed"); });
 function refreshMap(){
   if(S) return;
@@ -1063,11 +1109,11 @@ $("ttSave").onclick = async () => {
   try{
     await ttRoute({lat:53.2963, lon:-6.3621}, {lat:53.3498, lon:-6.2603}, k);   // one test route: Tallaght to the city centre
     settings.ttKey=k; settings.traffic=true; saveSettings(); $("ttKey").value="";
-    applyTraffic(); renderSwitches(); renderKey(t("tt_ok"), "ok"); toast(t("tt_ok"));
+    applyMapStyle(); applyTraffic(); renderSwitches(); renderKey(t("tt_ok"), "ok"); toast(t("tt_ok"));
     if(dest && travelMode==="car") previewRoute();
   }catch(e){ renderKey(t("tt_bad"), "bad"); }
 };
-$("ttRemove").onclick = () => { settings.ttKey=""; saveSettings(); applyTraffic(); renderKey(); };
+$("ttRemove").onclick = () => { settings.ttKey=""; saveSettings(); applyMapStyle(); applyTraffic(); renderKey(); };
 function renderSwitches(){ document.querySelectorAll("[data-set]").forEach(b => b.setAttribute("aria-checked", String(!!settings[b.dataset.set]))); }
 document.querySelectorAll("[data-set]").forEach(b => b.onclick = () => {
   settings[b.dataset.set] = !settings[b.dataset.set]; saveSettings(); renderSwitches();
@@ -1485,6 +1531,7 @@ function showReport(rep){
   $("report").hidden = false;
 }
 $("rClose").onclick = () => { $("report").hidden = true; };
+$("report").addEventListener("click", e => { if(e.target.id==="report") $("report").hidden = true; });   // tap outside to close
 function drawTrack(track, rep){
   if(!track || track.length<2) return;
   let run=[track[0]], flag=track[0][2];
