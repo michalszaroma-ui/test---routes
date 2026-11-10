@@ -6,7 +6,7 @@ const store = {
   get(k, d){ try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch(e){ return d; } },
   set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
 };
-const settings = Object.assign({mapStyle:"dark", limits:true, limitVoice:true, speedWarn:true, camAlerts:true, hzAlerts:true, camLayer:true, traffic:true, ttKey:"",
+const settings = Object.assign({mapStyle:"dark", limits:true, limitVoice:true, speedWarn:true, camAlerts:true, hzAlerts:true, camLayer:true, traffic:true, ttKey:"", placesLayer:true, examiner:false, bikeSpeed:22, cycleLayer:false,
   lang: /^pl/i.test(navigator.language||"") ? "pl" : "en"}, store.get("ttr-settings", {}));
 const saveSettings = () => store.set("ttr-settings", settings);
 let lang = settings.lang;
@@ -157,7 +157,7 @@ function prepareSteps(route, osrm){
     if(!ins) return;
     const [lon,lat]=step.maneuver.location;
     const r=nearest(route, pxy(route.o,lat,lon), seg, route.pts.length, 2);
-    seg=r.seg; route.steps.push({...ins, along:r.along});
+    seg=r.seg; route.steps.push({...ins, along:r.along, mtype:step.maneuver.type, mod:step.maneuver.modifier||"straight"});
   }));
   seg=0;
   route.stopAlong=(osrm.waypoints||[]).map(w => { const r=nearest(route, pxy(route.o,w.location[1],w.location[0]), seg, route.pts.length, 3); seg=r.seg; return r.along; });
@@ -166,8 +166,10 @@ function prepareSteps(route, osrm){
 // =====================================================================
 // Network services
 // =====================================================================
-async function osrmFetch(coords, signal){
-  const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=true`, {signal});
+const ROUTERS = {car:"https://router.project-osrm.org/route/v1/driving", bike:"https://routing.openstreetmap.de/routed-bike/route/v1/driving"};
+const bikeMs = () => (settings.bikeSpeed||22)/3.6;
+async function osrmFetch(coords, signal, profile){
+  const res = await fetchT(`${ROUTERS[profile]||ROUTERS.car}/${coords}?overview=full&geometries=geojson&steps=true`, {signal}, 15000);
   if(!res.ok) throw new Error("routing "+res.status);
   const j = await res.json();
   if(j.code!=="Ok" || !j.routes || !j.routes.length) throw new Error(j.code||"no route");
@@ -177,22 +179,101 @@ function applyOsrm(route, data){
   route.raw = data;
   buildGeom(route, data.route.geometry.coordinates);
   prepareSteps(route, {legs:data.route.legs, waypoints:data.waypoints});
-  route.duration = data.route.duration;
+  route.duration = route.profile==="bike" ? route.total / bikeMs() : data.route.duration;
   route.ok = true;
   if(route.isDest) finalizeDest(route);
 }
-const OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
-async function overpass(q, signal){
+// fetch with a time limit, so a slow server never leaves the app stuck on "searching"
+function fetchT(url, opts={}, ms=10000){
+  const ctl=new AbortController(); let timedOut=false;
+  const tm=setTimeout(() => { timedOut=true; ctl.abort(); }, ms);
+  const outer=opts.signal;
+  if(outer){ if(outer.aborted) ctl.abort(); else outer.addEventListener("abort", () => ctl.abort(), {once:true}); }
+  return fetch(url, {...opts, signal:ctl.signal}).catch(e => { if(timedOut) throw new Error("timeout"); throw e; }).finally(() => clearTimeout(tm));
+}
+const OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter",
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
+let opBest = store.get("ttr-opbest", 0) % OVERPASS.length;
+async function overpass(q, signal, ms=12000){
   let lastErr;
-  for(const ep of OVERPASS){
+  for(let n=0;n<OVERPASS.length;n++){
+    const i=(opBest+n)%OVERPASS.length;
     try{
-      const res = await fetch(ep, {method:"POST", body:"data="+encodeURIComponent(q), headers:{"Content-Type":"application/x-www-form-urlencoded"}, signal});
-      if(res.ok) return await res.json();
+      const res = await fetchT(OVERPASS[i], {method:"POST", body:"data="+encodeURIComponent(q), headers:{"Content-Type":"application/x-www-form-urlencoded"}, signal}, ms);
+      if(res.ok){ const j=await res.json(); if(i!==opBest){ opBest=i; store.set("ttr-opbest", i); } return j; }
       lastErr = new Error("overpass "+res.status);
     }catch(e){ if(e.name==="AbortError") throw e; lastErr=e; }
   }
   throw lastErr || new Error("overpass");
 }
+// ---------- Opening hours ----------
+function openState(oh, now=new Date()){
+  if(!oh) return null; const str=String(oh).trim();
+  if(str==="24/7") return true;
+  const D=["Mo","Tu","We","Th","Fr","Sa","Su"], di=(now.getDay()+6)%7, mins=now.getHours()*60+now.getMinutes();
+  let res=null;
+  for(const rule of str.split(";").map(x => x.trim()).filter(Boolean)){
+    if(/^(PH|SH)\b/.test(rule)) continue;
+    const m = rule.match(/^((?:Mo|Tu|We|Th|Fr|Sa|Su)(?:\s*[-,]\s*(?:Mo|Tu|We|Th|Fr|Sa|Su))*)?(?:\s*,\s*PH)?\s*(.*)$/);
+    if(!m) return null;
+    let applies = !m[1];
+    if(m[1]) for(const seg of m[1].replace(/\s/g,"").split(",")){ const [a,b]=seg.split("-"), ia=D.indexOf(a), ib=b?D.indexOf(b):ia; if(ia<0||ib<0) return null; if(ia<=ib ? di>=ia&&di<=ib : di>=ia||di<=ib) applies=true; }
+    if(!applies) continue;
+    const tp=m[2].trim();
+    if(/^(off|closed)$/i.test(tp)){ res=false; continue; }
+    if(tp==="24/7" || tp==="00:00-24:00"){ res=true; continue; }
+    let open=false;
+    for(const r of tp.split(",")){ const mm=r.trim().match(/^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\+?$/); if(!mm) return null; const a=+mm[1]*60+ +mm[2], b=+mm[3]*60+ +mm[4]; if(b>a ? mins>=a&&mins<b : mins>=a||mins<b) open=true; }
+    res=open;
+  }
+  return res;
+}
+const ocBadge = o => o===true ? `<span class="oc on">${t("open")}</span>` : o===false ? `<span class="oc off">${t("closed")}</span>` : "";
+// ---------- TomTom place search (fast, used for Nearby when a key is saved) ----------
+const TT_Q = {groc:"supermarket", fuel:"petrol station", ev:"electric vehicle charging station", cafe:"cafe", food:"restaurant", pharm:"pharmacy", cash:"atm", park:"parking", diy:"hardware store", pub:"pub", bshop:"bicycle shop"};
+function ttTime(x){ const [y,mo,d]=x.date.split("-").map(Number); return new Date(y, mo-1, d, x.hour, x.minute); }
+function ttHours(oh){
+  if(!oh || !oh.timeRanges) return {text:null, open:null};
+  const now=new Date(), today=now.toDateString(), f=d => d.toLocaleTimeString(locale(), {hour:"2-digit", minute:"2-digit"});
+  const rs=oh.timeRanges.map(r => ({a:ttTime(r.startTime), b:ttTime(r.endTime)}));
+  const open = rs.some(r => now>=r.a && now<r.b);
+  const tod = rs.filter(r => r.a.toDateString()===today || (now>=r.a && now<r.b));
+  return {text: tod.length ? tod.map(r => (r.b-r.a >= 86340000 ? "24h" : `${f(r.a)}–${f(r.b)}`)).join(", ") : t("closedToday"), open};
+}
+async function ttNearby(cat, c, radius, signal){
+  const q=TT_Q[cat.k]; if(!q || !ttKey()) return null;
+  const res = await fetchT(`https://api.tomtom.com/search/2/categorySearch/${encodeURIComponent(q)}.json?key=${encodeURIComponent(ttKey())}&lat=${c.lat}&lon=${c.lon}&radius=${radius}&limit=30&openingHours=nextSevenDays&countrySet=IE,GB&language=en-GB`, {signal}, 9000);
+  if(!res.ok) throw new Error("tomtom "+res.status);
+  return ((await res.json()).results||[]).map(r => {
+    const poi=r.poi||{}, hrs=ttHours(poi.openingHours);
+    return {lat:r.position.lat, lon:r.position.lon, label:poi.name||t("one_"+cat.k), sub:(r.address||{}).freeformAddress||"", kind:t("one_"+cat.k),
+      phone:poi.phone, web:poi.url, hours:hrs.text, open:hrs.open, openAt:Date.now(), ic:cat.ic, cat:cat.k};
+  });
+}
+// ---------- Weather (Open-Meteo, no key) ----------
+const wxMem = new Map();
+function wxInfo(c){
+  if(c===0||c===1) return ["wx_"+c,"sun"]; if(c===2) return ["wx_2","cloudsun"]; if(c===3) return ["wx_3","cloud"];
+  if(c===45||c===48) return ["wx_fog","fog"]; if(c>=51&&c<=55) return ["wx_drizzle","rain"]; if([56,57,66,67].includes(c)) return ["wx_frz","rain"];
+  if(c>=61&&c<=65) return ["wx_rain","rain"]; if((c>=71&&c<=77)||c===85||c===86) return ["wx_snow","snow"]; if(c>=80&&c<=82) return ["wx_showers","rain"];
+  if(c>=95) return ["wx_storm","storm"]; return ["wx_3","cloud"];
+}
+async function weatherAt(p){
+  const key=`${(+p.lat).toFixed(2)},${(+p.lon).toFixed(2)}`, hit=wxMem.get(key);
+  if(hit && Date.now()-hit.at < 15*60000) return hit.w;
+  const res = await fetchT(`https://api.open-meteo.com/v1/forecast?latitude=${(+p.lat).toFixed(3)}&longitude=${(+p.lon).toFixed(3)}&current=temperature_2m,weather_code,wind_speed_10m,wind_direction_10m,is_day&hourly=precipitation_probability&daily=sunrise,sunset&timezone=auto&forecast_days=2`, {}, 8000);
+  if(!res.ok) throw new Error("weather "+res.status);
+  const j = await res.json(), cur=j.current||{}, [k, icon]=wxInfo(cur.weather_code);
+  const hrs=(j.hourly&&j.hourly.time)||[], idx=Math.max(0, hrs.findIndex(x => x.slice(0,13)===String(cur.time||"").slice(0,13)));
+  const rain3 = Math.max(0, ...((j.hourly&&j.hourly.precipitation_probability)||[]).slice(idx, idx+3));
+  const w = {temp:Math.round(cur.temperature_2m), key:k, icon: cur.is_day===0 && icon==="sun" ? "moon" : icon, wind:Math.round(cur.wind_speed_10m||0), rain3,
+    sunset:((j.daily&&j.daily.sunset)||[])[0], sunrise:((j.daily&&j.daily.sunrise)||[])[0]};
+  w.windDir = cur.wind_direction_10m;
+  w.warn = ["wx_fog","wx_frz","wx_snow","wx_storm"].includes(k) || w.wind >= 60;
+  wxMem.set(key, {at:Date.now(), w});
+  return w;
+}
+
 const IE_BBOX = "-10.8,51.3,-5.3,55.5";
 function photonPlace(f){
   const p=f.properties||{}, [lon,lat]=f.geometry.coordinates;
@@ -418,6 +499,59 @@ function applyCamLayer(){
 }
 $("camBtn").onclick = () => { settings.camLayer=!settings.camLayer; saveSettings(); applyCamLayer(); renderSwitches(); };
 
+// ---------- Businesses on the map (appear when zoomed in) ----------
+const placesLayer = L.layerGroup(), plCells = new Set(), plSeen = new Set(); let plTimer=null, plBusy=false;
+const PL_CELL = 0.004;
+function poiStyle(tg){
+  const a=tg.amenity, sh=tg.shop, tr=tg.tourism;
+  if(sh==="supermarket"||sh==="convenience") return ["groc","cart","#33e3a1"];
+  if(a==="fuel") return ["fuel","fuel","#ffb547"];
+  if(a==="charging_station") return ["ev","plug","#33e3a1"];
+  if(a==="cafe"||a==="ice_cream") return ["cafe","cup","#d8a46f"];
+  if(a==="restaurant"||a==="fast_food") return ["food","fork","#ff7ab8"];
+  if(a==="pub"||a==="bar") return ["pub","pint","#ffb547"];
+  if(a==="pharmacy"||a==="hospital"||a==="doctors"||a==="dentist"||a==="veterinary") return ["pharm","cross","#ff4f6d"];
+  if(a==="bank"||a==="atm"||a==="post_office") return ["cash","euro","#38e1ff"];
+  if(tr==="hotel"||tr==="guest_house") return [null,"bed","#a48cff"];
+  if(tr) return [null,"star","#ffb547"];
+  if(sh==="doityourself"||sh==="hardware") return ["diy","tool","#8fa7c9"];
+  if(sh) return [null,"bag","#38e1ff"];
+  return [null,"pin","#8a9bb6"];
+}
+const prettyTag = v => String(v||"").replace(/_/g," ").replace(/^./, c => c.toUpperCase());
+function poiPlace(e){
+  const tg=e.tags||{}, [catk, ic] = poiStyle(tg), lat=e.lat ?? (e.center&&e.center.lat), lon=e.lon ?? (e.center&&e.center.lon);
+  const street=[tg["addr:housenumber"], tg["addr:street"]].filter(Boolean).join(" ");
+  const kind = catk ? t("one_"+catk) : prettyTag(tg.shop || tg.amenity || tg.tourism);
+  return {lat, lon, label:tg.name, sub:[street, tg["addr:suburb"]||tg["addr:city"]||tg["addr:town"]].filter(Boolean).join(", ") || kind, kind,
+    hours:tg.opening_hours, open:openState(tg.opening_hours), phone:tg.phone||tg["contact:phone"], web:tg.website||tg["contact:website"], ic, cat:catk||"shop"};
+}
+async function placesRefresh(){
+  const show = settings.placesLayer && !S && map.getZoom() >= 16;
+  if(!show){ if(map.hasLayer(placesLayer)) placesLayer.remove(); return; }
+  if(!map.hasLayer(placesLayer)) placesLayer.addTo(map);
+  if(plBusy) return;
+  const b=map.getBounds().pad(.25), need=[];
+  for(let y=Math.floor(b.getSouth()/PL_CELL); y<=Math.floor(b.getNorth()/PL_CELL); y++)
+    for(let x=Math.floor(b.getWest()/PL_CELL); x<=Math.floor(b.getEast()/PL_CELL); x++){ const k=x+","+y; if(!plCells.has(k)) need.push([x,y]); }
+  if(!need.length) return;
+  const xs=need.map(c=>c[0]), ys=need.map(c=>c[1]);
+  const bb=`${Math.min(...ys)*PL_CELL},${Math.min(...xs)*PL_CELL},${(Math.max(...ys)+1)*PL_CELL},${(Math.max(...xs)+1)*PL_CELL}`;
+  plBusy=true;
+  try{
+    const j = await overpass(`[out:json][timeout:15];(nwr["shop"]["name"](${bb});nwr["amenity"~"^(cafe|restaurant|fast_food|pub|bar|pharmacy|fuel|bank|atm|post_office|charging_station|hospital|doctors|dentist|veterinary|ice_cream|cinema|library|car_wash)$"]["name"](${bb});nwr["tourism"~"^(hotel|guest_house|museum|attraction)$"]["name"](${bb}););out center tags 300;`, null, 12000);
+    need.forEach(([x,y]) => plCells.add(x+","+y));
+    for(const e of j.elements||[]){
+      const id=e.type+e.id; if(plSeen.has(id)) continue; plSeen.add(id);
+      const p=poiPlace(e); if(p.lat==null) continue; const col=poiStyle(e.tags||{})[2];
+      L.marker([p.lat,p.lon], {keyboard:false, icon:L.divIcon({className:"", iconSize:[24,24], iconAnchor:[12,12],
+        html:`<div class="plm" style="--c:${col}">${ico(p.ic)}${p.open===true?'<i class="dot on"></i>':p.open===false?'<i class="dot off"></i>':""}</div>`})})
+        .bindTooltip(esc(p.label), {direction:"top", offset:[0,-10]}).on("click", () => openPlace(p)).addTo(placesLayer);
+    }
+  }catch(e){} finally{ plBusy=false; }
+}
+map.on("moveend", () => { clearTimeout(plTimer); plTimer=setTimeout(placesRefresh, 500); });
+
 // ---------- Your location (browse mode) ----------
 let here = null;
 function biasPoint(){ if(here) return here; const c=map.getCenter(); return {lat:c.lat, lon:c.lng}; }
@@ -514,7 +648,7 @@ let dest = null, previewCtl = null;
 const places = store.get("ttr-places", {});
 let favs = store.get("ttr-favs", []), recent = store.get("ttr-recent", []);
 const samePlace = (a,b) => a && b && Math.abs(a.lat-b.lat)<0.0003 && Math.abs(a.lon-b.lon)<0.0003;
-const slim = p => ({lat:p.lat, lon:p.lon, label:p.label, sub:p.sub||"", kind:p.kind||"", hours:p.hours, phone:p.phone, web:p.web, ex:p.ex, cat:p.cat});
+const slim = p => ({lat:p.lat, lon:p.lon, label:p.label, sub:p.sub||"", kind:p.kind||"", hours:p.hours, phone:p.phone, web:p.web, ex:p.ex, cat:p.cat, open:p.open, openAt:p.openAt});
 function view(p){
   if(p.ex!=null && EXPLORE[p.ex]){
     const x=EXPLORE[p.ex];
@@ -526,13 +660,17 @@ function renderPlaces(){
   const chips = [];
   if(places.home) chips.push(`<button class="chip place" type="button" data-q="home">${ico("home")}${t("home")}</button>`);
   if(places.work) chips.push(`<button class="chip place" type="button" data-q="work">${ico("work")}${t("work")}</button>`);
+  if(car) chips.unshift(`<button class="chip place" type="button" data-car>${ico("car")}${t("myCar")}</button>`);
   favs.forEach((f,i) => chips.push(`<button class="chip" type="button" data-fav="${i}">${ico("star")}${esc(f.label)}</button>`));
+  chips.push(`<button class="chip" type="button" data-parkhere>${ico("park")}${t("parkHere")}</button>`);
   $("places").innerHTML = chips.join(""); $("places").hidden = !chips.length;
   renderSaved();
 }
 $("places").addEventListener("click", e => {
   const q=e.target.closest("[data-q]"), f=e.target.closest("[data-fav]");
   if(q) openPlace(places[q.dataset.q], q.dataset.q); else if(f) openPlace(favs[+f.dataset.fav]);
+  else if(e.target.closest("[data-car]")) openCar();
+  else if(e.target.closest("[data-parkhere]")) locate(h => { if(h){ saveCar(h); toast(t("parkSaved")); } });
 });
 function itemHtml(p, attrs, icon){
   const d = distFromHere(p), v = view(p);
@@ -564,22 +702,47 @@ $("results").addEventListener("click", e => { const b=e.target.closest("[data-i]
 // Place card
 let travelMode = store.get("ttr-mode", "car");
 const destName = d => d.nameKey ? t(d.nameKey) : d.isPin ? t("pin") : d.dest.label;
-function openPlace(p, nameKey, isPin){
+function openPlace(p, nameKey, isPin, isCar){
   if(!p) return;
   const place = slim(p);
-  dest = {id:"dest", isDest:true, nameKey, isPin:!!isPin, color:"#38e1ff", dest:place, stops:[]};
+  dest = {id:"dest", isDest:true, nameKey, isPin:!!isPin, isCar:!!isCar, color:"#38e1ff", dest:place, stops:[]};
   if(tab!=="go") showTab("go");
   $("sheet").classList.remove("collapsed");
   ptData=null; ptSel=0; dest.photos=null;
   renderDestCard();
-  if(!isPin) addRecent(place);
+  if(!isPin && !isCar) addRecent(place);
   clearRoute(); destMarker(place);
   map.setView([place.lat, place.lon], Math.max(map.getZoom(), 14));
   $("panes").scrollTop = 0;
-  if(travelMode==="pt") ptSearch(); else previewRoute();
-  const r = dest; $("destHero").className = "hero loading";
-  photosFor(place).then(ph => { if(dest===r){ r.photos=ph; renderPhotos(); } });
+  const r = dest;
+  if(isCar) withHere(h => { if(dest===r){ r.walk = h ? hav(h.lat,h.lon,place.lat,place.lon) : null; renderMode(); } });
+  else if(travelMode==="pt") ptSearch(); else previewRoute();
+  $("destHero").className = isCar ? "hero none" : "hero loading";
+  if(!isCar) photosFor(place).then(ph => { if(dest===r){ r.photos=ph; renderPhotos(); } });
+  $("destWx").hidden = true;
+  weatherAt(place).then(w => { if(dest===r){ r.wx=w; renderWx(); } }).catch(() => {});
 }
+function renderWx(){
+  const w = dest && dest.wx, el=$("destWx");
+  if(!w || dest.isCar){ el.hidden=true; return; }
+  const tm = s => String(s||"").slice(11,16);
+  el.hidden=false;
+  el.innerHTML = `<span class="wxm">${ico(w.icon)}<b>${w.temp}°</b>${esc(t(w.key))}</span><span>${ico("wind")}${esc(t("wind",{v:w.wind}))}</span>`
+    + (w.sunset ? `<span>${ico("moon")}${esc(t("sunset",{t:tm(w.sunset)}))}</span>` : "")
+    + (w.rain3 >= 40 ? `<span class="wet">${ico("rain")}${esc(t("rain3",{p:w.rain3}))}</span>` : "");
+  renderBikeInfo();
+}
+// ---------- Find my car ----------
+let car = store.get("ttr-car", null);
+const carLayer = L.layerGroup().addTo(map);
+function drawCar(){
+  carLayer.clearLayers();
+  if(!car || S) return;
+  L.marker([car.lat, car.lon], {keyboard:false, zIndexOffset:400, icon:L.divIcon({className:"", iconSize:[34,34], iconAnchor:[17,17], html:`<div class="carmk">${ico("car")}</div>`})})
+    .on("click", openCar).addTo(carLayer);
+}
+function saveCar(p){ car = {lat:p.lat, lon:p.lon, at:Date.now()}; store.set("ttr-car", car); renderPlaces(); drawCar(); }
+function openCar(){ if(car) openPlace({lat:car.lat, lon:car.lon, label:t("myCar"), sub:t("parkedAt",{t:hhmm(car.at)})}, "myCar", false, true); }
 function renderPhotos(){
   const ph = dest && dest.photos, hero=$("destHero"), gal=$("destGal");
   if(!ph || !ph.hero){ hero.className="hero none"; hero.innerHTML=""; gal.innerHTML=""; gal.hidden=true; return; }
@@ -602,7 +765,8 @@ function renderDestCard(){
   if(p.trail) parts.push(`<div class="trail">${p.trail.map(x=>`<span>${esc(x)}</span>`).join("")}</div>`);
   if(p.blurb) parts.push(`<p>${esc(p.blurb)}</p>`);
   const info = [];
-  if(p.hours) info.push(`<div><span>${t("hours")}</span><em>${esc(p.hours)}</em></div>`);
+  if(p.hours){ const op=openState(p.hours), o = op!==null ? op : (p.openAt && Date.now()-p.openAt < 30*60000 ? p.open : null);
+    info.push(`<div><span>${t("hours")}</span><em>${esc(p.hours)} ${ocBadge(o)}</em></div>`); }
   if(p.phone) info.push(`<div><span>${t("phone")}</span><a href="tel:${esc(p.phone.replace(/[^\d+]/g,""))}">${esc(p.phone)}</a></div>`);
   const w = p.web && safeUrl(p.web);
   if(w) info.push(`<div><span>${t("web")}</span><a href="${esc(w)}" target="_blank" rel="noopener">${esc(hostOf(w))}</a></div>`);
@@ -610,22 +774,77 @@ function renderDestCard(){
   $("destBody").innerHTML = parts.join("");
   const isFav = favs.some(f => samePlace(f,p));
   $("favBtn").innerHTML = `${ico("star")}${isFav?t("savedBtn"):t("save")}`; $("favBtn").classList.toggle("on", isFav);
-  renderMode(); renderEta(); renderPhotos();
+  $("destCard").classList.toggle("car", !!dest.isCar);
+  renderMode(); renderEta(); renderPhotos(); renderWx();
   $("destCard").hidden = false;
 }
 function renderMode(){
+  const isCar = !!(dest && dest.isCar);
   document.querySelectorAll("#modeSeg [data-mode]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode===travelMode)));
-  $("carBox").hidden = travelMode!=="car"; $("ptBox").hidden = travelMode!=="pt";
-  if(dest) $("gmaps").href = `https://www.google.com/maps/dir/?api=1&destination=${dest.dest.lat},${dest.dest.lon}&travelmode=${travelMode==="pt"?"transit":"driving"}`;
+  $("modeSeg").hidden = isCar; $("carBox").hidden = isCar || travelMode==="pt"; $("ptBox").hidden = isCar || travelMode!=="pt";
+  applyCycle();
+  $("carInfo").hidden = !isCar; $("forgetCar").hidden = !isCar;
+  if(isCar) $("carInfo").innerHTML = `${ico("walk")}<b>${dest.walk!=null ? esc(t("walkAway",{d:fmtDist(dest.walk)})) : "…"}</b><span>${esc(t("parkedAt",{t:hhmm(car ? car.at : Date.now())}))}</span>`;
+  const sharable = !isCar && travelMode!=="pt" && dest && dest.eta && dest.eta.key==="etaDrive";
+  $("shareBtn").hidden = !sharable; $("shareBtn").innerHTML = `${ico("share")}${t("share")}`;
+  if(dest) $("gmaps").href = `https://www.google.com/maps/dir/?api=1&destination=${dest.dest.lat},${dest.dest.lon}&travelmode=${isCar ? "walking" : travelMode==="pt" ? "transit" : travelMode==="bike" ? "bicycling" : "driving"}`;
 }
+$("forgetCar").onclick = () => { car=null; store.set("ttr-car", null); renderPlaces(); drawCar(); $("destClose").onclick(); };
+$("shareBtn").onclick = async () => {
+  if(!dest || !dest.eta || !dest.eta.v) return;
+  const when = hhmm(Date.now() + dest.eta.v.s*1000), url=`https://www.google.com/maps/search/?api=1&query=${dest.dest.lat},${dest.dest.lon}`;
+  const text = t("shareText", {n:destName(dest), t:when});
+  try{ if(navigator.share){ await navigator.share({title:"Drive Ireland", text, url}); return; } }catch(e){ if(e.name==="AbortError") return; }
+  try{ await navigator.clipboard.writeText(text+" "+url); toast(t("copied")); }catch(e){ toast(text); }
+};
 function setEta(key, v){ if(dest){ dest.eta = {key, v}; renderEta(); } }
 function renderEta(){
   const e = dest && dest.eta, el=$("destEta");
   if(!e){ el.className="eta wait"; el.textContent=""; return; }
   el.className = e.key==="etaDrive" ? "eta" : "eta wait";
   const tr = e.v && e.v.delay!=null ? (e.v.delay >= 60 ? `<em class="tdelay bad">${esc(t("delayMin",{m:Math.round(e.v.delay/60)}))}</em>` : `<em class="tdelay">${esc(t("noDelay"))}</em>`) : "";
-  el.innerHTML = e.key==="etaDrive" ? `${ico("car")}<b>${esc(fmtDur(e.v.s))}</b><span>${esc(fmtDist(e.v.m))}</span>${tr}` : esc(t(e.key));
-  renderInc();
+  const bk = e.v && e.v.bike;
+  el.innerHTML = e.key==="etaDrive" ? `${ico(bk ? "bike" : "car")}<b>${esc(fmtDur(e.v.s))}</b><span>${esc(fmtDist(e.v.m))}</span>${bk ? "" : tr}` : esc(t(e.key));
+  el.classList.toggle("bk", !!bk);
+  renderBikeInfo(); renderInc(); renderMode();
+}
+// Bike extras: climb, head/tailwind and an elevation profile
+function windRel(r, w){
+  if(!w || w.windDir==null || !r.pts || w.wind < 8) return null;
+  const a=r.pts[0], b=r.pts[r.pts.length-1], brg=(Math.atan2(b.x-a.x, b.y-a.y)/RAD+360)%360;
+  const diff=Math.abs(((brg - w.windDir) % 360 + 540) % 360 - 180);           // 0 = riding straight into the wind
+  return diff < 60 ? "headwind" : diff > 120 ? "tailwind" : "crosswind";
+}
+function renderBikeInfo(){
+  const box=$("bikeInfo"), r=dest;
+  if(!r || travelMode!=="bike" || !r.pts || r.isCar){ box.hidden=true; return; }
+  const chips=[], el=r.elev, wr=windRel(r, r.wx);
+  if(el) chips.push(`<span>${ico("climb")}${esc(t("climbUp",{m:el.climb}))}</span><span>${ico("descend")}${esc(t("climbDown",{m:el.drop}))}</span>`);
+  if(wr) chips.push(`<span class="${wr}">${ico("wind")}${esc(t(wr,{v:r.wx.wind}))}</span>`);
+  let spark="";
+  if(el && el.elev.length > 2){
+    const v=el.elev, lo=Math.min(...v), hi=Math.max(...v), span=Math.max(hi-lo, 15);
+    const pts=v.map((y,i) => `${(i/(v.length-1)*100).toFixed(2)},${(28-(y-lo)/span*24).toFixed(2)}`).join(" ");
+    spark = `<div class="elev"><svg viewBox="0 0 100 30" preserveAspectRatio="none"><defs><linearGradient id="eg" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#33e3a1" stop-opacity=".45"/><stop offset="1" stop-color="#33e3a1" stop-opacity="0"/></linearGradient></defs><polygon points="0,30 ${pts} 100,30" fill="url(#eg)"/><polyline points="${pts}" fill="none" stroke="#33e3a1" stroke-width="1.2" vector-effect="non-scaling-stroke"/></svg><span>${Math.round(hi)} m</span><span>${Math.round(lo)} m</span></div>`;
+  }
+  box.hidden = !chips.length && !spark;
+  box.innerHTML = `<div class="bchips">${chips.join("")}</div>${spark}`;
+}
+async function elevationFor(route){
+  const n=Math.min(100, Math.max(12, Math.round(route.total/80))), pts=[...Array(n)].map((_,i) => pointAt(route, route.total*i/(n-1)));
+  const res = await fetchT(`https://api.open-meteo.com/v1/elevation?latitude=${pts.map(p=>p.lat.toFixed(5)).join(",")}&longitude=${pts.map(p=>p.lon.toFixed(5)).join(",")}`, {}, 8000);
+  if(!res.ok) throw new Error("elevation "+res.status);
+  const el=((await res.json()).elevation||[]).filter(v => typeof v==='number'); if(el.length < 3) throw new Error('no elevation'); let climb=0, drop=0;
+  for(let i=1;i<el.length;i++){ const d=el[i]-el[i-1]; if(d>0) climb+=d; else drop-=d; }
+  return {elev:el, climb:Math.round(climb), drop:Math.round(drop)};
+}
+// Cycle lanes overlay (CyclOSM lite)
+let cycleLayer=null;
+function applyCycle(){
+  const on = settings.cycleLayer || (!!dest && travelMode==="bike" && !dest.isCar) || !!(S && S.route.profile==="bike");
+  if(on && !cycleLayer) cycleLayer = L.tileLayer("https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm-lite/{z}/{x}/{y}.png",
+    {subdomains:"abc", maxZoom:20, maxNativeZoom:19, zIndex:4, opacity:.95, attribution:'Cycle lanes © <a href="https://www.cyclosm.org" target="_blank" rel="noopener">CyclOSM</a>'}).addTo(map);
+  else if(!on && cycleLayer){ cycleLayer.remove(); cycleLayer=null; }
 }
 function renderInc(){
   const list = (dest && travelMode==="car" && dest.incidents) || [], box=$("destInc");
@@ -643,11 +862,14 @@ async function previewRoute(){
     if(!h){ setEta("tapGo"); return; }
     if(hav(h.lat,h.lon,r.dest.lat,r.dest.lon) < 60){ setEta("youreHere"); return; }
     try{
-      const data = await osrmFetch(`${h.lon},${h.lat};${r.dest.lon},${r.dest.lat}`, previewCtl.signal);
-      if(dest!==r) return;
+      const bike = travelMode==="bike";
+      r.profile = bike ? "bike" : "car"; r.color = bike ? "#33e3a1" : "#38e1ff"; r.elev = null;
+      const data = await osrmFetch(`${h.lon},${h.lat};${r.dest.lon},${r.dest.lat}`, previewCtl.signal, r.profile);
+      if(dest!==r || r.profile!==(travelMode==="bike"?"bike":"car")) return;
       applyOsrm(r, data);
-      setEta("etaDrive", {s:r.duration, m:r.total});
-      if(tab==="go" && !S && travelMode==="car"){ drawRoute(r, false); fitTo(routeLayer.getLayers()[2].getBounds(), 15); }
+      setEta("etaDrive", {s:r.duration, m:r.total, bike});
+      if(tab==="go" && !S && travelMode!=="pt"){ drawRoute(r, false); fitTo(routeLayer.getLayers()[2].getBounds(), 15); }
+      if(bike){ elevationFor(r).then(el => { if(dest===r){ r.elev=el; renderEta(); } }).catch(() => {}); return; }
       if(ttKey()){
         ttRoute(h, r.dest).then(tr => { if(dest===r){ r.duration = tr.secs; setEta("etaDrive", {s:tr.secs, m:r.total, delay:tr.delay}); } }).catch(() => {});
         ttIncidents(r).then(list => { if(dest===r){ r.incidents = list; renderInc(); } }).catch(() => {});
@@ -656,7 +878,7 @@ async function previewRoute(){
   });
 }
 function finalizeDest(r){ const last = r.steps[r.steps.length-1]; if(last && last.icon==="flag") last.text = r.isPin ? t("arrPin") : t("arrAt", {n:destName(r)}); }
-$("destClose").onclick = () => { dest=null; ptData=null; $("destCard").hidden=true; if(previewCtl) previewCtl.abort(); if(ptCtl) ptCtl.abort(); refreshMap(); };
+$("destClose").onclick = () => { dest=null; ptData=null; $("destCard").hidden=true; if(previewCtl) previewCtl.abort(); if(ptCtl) ptCtl.abort(); applyCycle(); refreshMap(); };
 $("favBtn").onclick = () => {
   if(!dest) return; const p=dest.dest, i=favs.findIndex(f => samePlace(f,p));
   if(i>=0){ favs.splice(i,1); toast(t("removedT")); }
@@ -673,7 +895,7 @@ $("modeSeg").addEventListener("click", e => {
   travelMode=b.dataset.mode; store.set("ttr-mode", travelMode); renderMode();
   if(!dest) return;
   clearRoute(); destMarker(dest.dest);
-  if(travelMode==="pt") ptSearch(); else if(dest.pts) refreshMap(); else previewRoute();
+  if(travelMode==="pt") ptSearch(); else { dest.pts=null; dest.raw=null; dest.incidents=null; previewRoute(); }
 });
 map.on("contextmenu", async e => {
   if(S) return;
@@ -699,43 +921,56 @@ function osmPlace(e, cat){
   const area=tg["addr:suburb"]||tg["addr:city"]||tg["addr:town"]||tg["addr:village"];
   const brand = tg.name && tg.brand && tg.brand!==tg.name ? tg.brand : "";
   return {lat, lon, label:tg.name||tg.brand||tg.operator||t("one_"+cat.k), sub:[street, area].filter(Boolean).join(", ") || brand || t("one_"+cat.k),
-    kind:t("one_"+cat.k), hours:tg.opening_hours, phone:tg.phone||tg["contact:phone"], web:tg.website||tg["contact:website"], ic:cat.ic, cat:cat.k};
+    kind:t("one_"+cat.k), hours:tg.opening_hours, open:openState(tg.opening_hours), phone:tg.phone||tg["contact:phone"], web:tg.website||tg["contact:website"], ic:cat.ic, cat:cat.k};
 }
+let nearOpenOnly = false;
 function renderNear(){
   if(!nearCat) return;
-  if(!nearMeta){ $("nearTitle").textContent = t("nearSearching", {c:t("cat_"+nearCat.k)}); return; }
-  if(nearMeta.err){ $("nearTitle").textContent = t("cat_"+nearCat.k); $("nearList").innerHTML = `<div class="empty">${t("nearFail")}</div>`; return; }
+  $("nearOpen").classList.toggle("on", nearOpenOnly);
+  if(!nearMeta){ $("nearTitle").textContent = t("nearSearching", {c:t("cat_"+nearCat.k)}); $("nearList").innerHTML = `<div class="scan"><i></i><i></i><i></i></div>`; return; }
+  if(nearMeta.err){ $("nearTitle").textContent = t("cat_"+nearCat.k); $("nearList").innerHTML = `<div class="empty">${t("nearFail")} <button class="link inl" type="button" data-retry>${t("retry")}</button></div>`; return; }
   $("nearTitle").textContent = t("nearWithin", {c:t("cat_"+nearCat.k), r:num(nearMeta.radius, nearMeta.radius%1?1:0)}) + (nearMeta.fromHere ? "" : t("nearMapCentre"));
-  $("nearList").innerHTML = nearResults.length
-    ? nearResults.map((p,i) => `<button class="item" type="button" data-n="${i}"><span class="ico">${ico(p.ic)}</span>
-        <span class="meta"><b>${esc(p.label)}</b><small>${esc(p.hours ? p.hours : p.sub)}</small></span><span class="far">${fmtDist(p.d)}</span></button>`).join("")
+  const list = nearResults.map((p,i) => ({p,i})).filter(x => !nearOpenOnly || x.p.open===true);
+  $("nearList").innerHTML = list.length
+    ? list.map(({p,i}) => `<button class="item" type="button" data-n="${i}"><span class="ico">${ico(p.ic)}</span>
+        <span class="meta"><b>${esc(p.label)}</b><small>${esc(p.sub || p.hours || "")}</small></span><span class="rt">${ocBadge(p.open)}<span class="far">${fmtDist(p.d)}</span></span></button>`).join("")
     : `<div class="empty">${t("nearNone")}</div>`;
 }
 async function nearby(cat){
   nearCat = cat; nearMeta = null; renderCats();
-  $("nearWrap").hidden=false; $("nearList").innerHTML=""; renderNear();
+  $("nearWrap").hidden=false; renderNear();
   if(nearCtl) nearCtl.abort(); nearCtl = new AbortController(); const ctl=nearCtl;
   const c = freshHere() ? here : await new Promise(res => locate(h => res(h || biasPoint()), true));
+  if(ctl!==nearCtl) return;
   const fromHere = !!(here && c===here);
-  const ask = R => overpass(`[out:json][timeout:20];(${cat.q.map(f => `nwr${f}(around:${R},${c.lat},${c.lon});`).join("")});out center tags 80;`, ctl.signal);
   try{
-    let j = await ask(2500), radius = 2.5;
-    if((j.elements||[]).length < 4){ j = await ask(8000); radius = 8; }
+    let list=null, radius=3;
+    if(ttKey() && TT_Q[cat.k]){
+      try{ list = await ttNearby(cat, c, 3000, ctl.signal); if(list && list.length < 4){ list = await ttNearby(cat, c, 8000, ctl.signal); radius = 8; } }
+      catch(e){ if(e.name==="AbortError") throw e; list = null; }
+    }
+    if(!list){
+      const ask = R => overpass(`[out:json][timeout:15];(${cat.q.map(f => `nwr${f}(around:${R},${c.lat},${c.lon});`).join("")});out center tags 80;`, ctl.signal, 12000);
+      let j = await ask(3000); radius = 3;
+      if((j.elements||[]).length < 4){ j = await ask(8000); radius = 8; }
+      list = (j.elements||[]).map(e => osmPlace(e, cat)).filter(p => p.lat!=null);
+    }
     if(ctl!==nearCtl) return;
-    nearResults = (j.elements||[]).map(e => osmPlace(e, cat)).filter(p => p.lat!=null).map(p => ({...p, d:hav(c.lat,c.lon,p.lat,p.lon)})).sort((a,b) => a.d-b.d).slice(0,25);
+    nearResults = list.map(p => ({...p, d:hav(c.lat,c.lon,p.lat,p.lon)})).sort((a,b) => a.d-b.d).slice(0,25);
     nearMeta = {radius, fromHere}; renderNear(); drawNearMarkers(true);
-  }catch(e){ if(e.name!=="AbortError"){ nearMeta = {err:true}; renderNear(); } }
+  }catch(e){ if(e.name!=="AbortError" && ctl===nearCtl){ nearMeta = {err:true}; renderNear(); } }
 }
 function drawNearMarkers(fit){
   poiLayer.clearLayers(); if(tab!=="go" || !nearResults.length) return;
   const pts=[];
   nearResults.forEach(p => {
-    L.marker([p.lat,p.lon], {keyboard:false, icon:L.divIcon({className:"", iconSize:[28,28], iconAnchor:[14,14], html:`<div class="poi">${ico(p.ic)}</div>`})}).on("click", () => openPlace(p)).addTo(poiLayer);
+    L.marker([p.lat,p.lon], {keyboard:false, icon:L.divIcon({className:"", iconSize:[28,28], iconAnchor:[14,14], html:`<div class="poi ${p.open===false?"shut":""}">${ico(p.ic)}</div>`})}).on("click", () => openPlace(p)).addTo(poiLayer);
     pts.push([p.lat,p.lon]);
   });
   if(fit){ if(here) pts.push([here.lat,here.lon]); fitTo(L.latLngBounds(pts)); }
 }
-$("nearList").addEventListener("click", e => { const b=e.target.closest("[data-n]"); if(b) openPlace(nearResults[+b.dataset.n]); });
+$("nearList").addEventListener("click", e => { if(e.target.closest("[data-retry]")){ nearby(nearCat); return; } const b=e.target.closest("[data-n]"); if(b) openPlace(nearResults[+b.dataset.n]); });
+$("nearOpen").onclick = () => { nearOpenOnly = !nearOpenOnly; renderNear(); };
 $("nearClose").onclick = () => { nearResults=[]; nearCat=null; nearMeta=null; $("nearWrap").hidden=true; poiLayer.clearLayers(); renderCats(); };
 
 // =====================================================================
@@ -1119,6 +1354,8 @@ document.querySelectorAll("[data-set]").forEach(b => b.onclick = () => {
   settings[b.dataset.set] = !settings[b.dataset.set]; saveSettings(); renderSwitches();
   if(b.dataset.set==="camLayer") applyCamLayer();
   if(b.dataset.set==="traffic") applyTraffic();
+  if(b.dataset.set==="placesLayer") placesRefresh();
+  if(b.dataset.set==="cycleLayer") applyCycle();
 });
 function renderSaved(){
   const rows = [];
@@ -1131,6 +1368,9 @@ $("savedList").addEventListener("click", e => {
   if(p){ delete places[p.dataset.rmp]; store.set("ttr-places", places); } else if(f){ favs.splice(+f.dataset.rmf,1); store.set("ttr-favs", favs); } else return;
   renderPlaces();
 });
+$("bikeSpeed").addEventListener("click", e => { const b=e.target.closest("[data-speed]"); if(!b) return; settings.bikeSpeed=+b.dataset.speed; saveSettings(); renderBikeSpeed();
+  if(dest && travelMode==="bike" && dest.pts){ dest.duration = dest.total/bikeMs(); setEta("etaDrive", {s:dest.duration, m:dest.total, bike:true}); } });
+function renderBikeSpeed(){ document.querySelectorAll("#bikeSpeed [data-speed]").forEach(b => b.setAttribute("aria-pressed", String(+b.dataset.speed===settings.bikeSpeed))); }
 $("langSeg").addEventListener("click", e => { const b=e.target.closest("[data-lang]"); if(b && b.dataset.lang!==lang){ lang=settings.lang=b.dataset.lang; saveSettings(); applyLang(); } });
 
 // ---------- Voice and sound ----------
@@ -1198,7 +1438,7 @@ function setLimit(lim, announce){
   if(announce && settings.limitVoice && settings.limits) say(t("v_limit", {n:lim.v, mph:lim.u==="mph"}));
 }
 function showLimit(){
-  const el=$("limitSign"); el.hidden = !settings.limits;
+  const el=$("limitSign"); el.hidden = !settings.limits || !!(S && S.route.profile==="bike");
   el.classList.toggle("unknown", !SL.limit);
   el.innerHTML = SL.limit ? `${SL.limit.v}${SL.limit.u==="mph"?"<small>mph</small>":""}` : "–";
 }
@@ -1232,7 +1472,9 @@ function startSession(r, mode){
   if(!r || (!r.pts && !r.isDest)) return;
   unlockAudio();
   if(r.isDest){ r.pts=null; r.hz=null; r.lim=null; clearRoute(); destMarker(r.dest); } else drawRoute(r, false);
-  poiLayer.clearLayers(); camLayer.remove();
+  poiLayer.clearLayers(); camLayer.remove(); placesLayer.remove(); carLayer.clearLayers();
+  if(r.isDest){ r.profile = travelMode==="bike" ? "bike" : "car"; r.color = r.profile==="bike" ? "#33e3a1" : "#38e1ff"; }
+  document.body.classList.toggle("riding", r.profile==="bike");
   if(hereMarker){ hereMarker.remove(); hereMarker=null; }
   S = {route:r, mode, seg:0, progress:0, off:0, offSaid:false, said:{}, hzSaid:{}, limSaid:{}, startedAt:Date.now(), finished:false, lastFix:null, routing:false, lastRoute:0, overN:0, lastWarn:0,
        rec:{track:[], dist:0, maxV:0, speeding:[], brakes:[], stopMin:{}, last:null, overRun:0, lastBrake:0}};
@@ -1245,7 +1487,8 @@ function startSession(r, mode){
   map.setZoom(17);
   if(r.isDest){ showSign({icon:"arrow", deg:0}, "", false); $("signInstr").textContent = t("findingYou"); }
   else {
-    say(t("v_intro",{id:r.id, n:routeName(r), s:r.stops.length-2}) + (mode==="sim" ? t("v_introSim") : ""), true);
+    say((settings.examiner ? t("ex_intro") : t("v_intro",{id:r.id, n:routeName(r), s:r.stops.length-2})) + (mode==="sim" ? t("v_introSim") : ""), true);
+    if(settings.examiner && mode==="gps") S.ex = planPullIns(r);
     if(r.lim){ const L0=limitAt(r,0); if(L0) setLimit(L0, true); }
     if(ttKey()) liveTraffic(r, null, true);
   }
@@ -1275,12 +1518,16 @@ function endSession(){
   if(meMarker){ meMarker.remove(); meMarker=null; }
   try{ if(document.fullscreenElement) document.exitFullscreen().catch(()=>{}); }catch(e){}
   const wasDest = S.route.isDest, rep = S.report || (S.mode==="gps" && S.progress/(S.route.total||1) > .6 ? buildReport() : null);
+  const parkAt = S.mode==="gps" && S.lastFix && S.route.profile!=="bike" ? {...S.lastFix} : null;
   lastTrack = S.mode==="gps" ? S.rec.track : null;
   S=null;
   document.body.classList.remove("driving");
   $("hud").hidden=true; $("dial").hidden=true; $("sign").classList.remove("off"); $("recenter").hidden=true; $("fabs").hidden=false;
   $("driveView").hidden=true;
   if(settings.camLayer) camLayer.addTo(map);
+  document.body.classList.remove("riding"); applyCycle();
+  if(parkAt) saveCar(parkAt); else drawCar();
+  placesRefresh();
   renderRoutes(); renderPrep();
   if(wasDest && dest){ dest.pts=null; dest.raw=null; dest.eta=null; renderEta(); }
   refreshMap();
@@ -1298,8 +1545,8 @@ function showSign(ins, distText, off, next){
   $("signThen").hidden = !next; if(next) $("signThen").textContent = t("then", {s:lc(next.text)});
   $("sign").classList.toggle("off", !!off);
 }
-function setDial(kmh, over){
-  const max=140, C=235.6, v = kmh==null ? 0 : Math.min(kmh, max);
+function setDial(kmh, over, bike){
+  const max=bike ? 50 : 140, C=235.6, v = kmh==null ? 0 : Math.min(kmh, max);
   $("dialArc").style.strokeDasharray = `${(v/max)*C} 400`;
   $("dial").classList.toggle("over", !!over);
   $("spd").textContent = kmh==null ? "–" : kmh;
@@ -1311,15 +1558,20 @@ async function routeFromHere(f, isReroute){
   S.routing = true; S.lastRoute = Date.now();
   if(isReroute) say(t("v_rerouting"), true);
   try{
-    const data = await osrmFetch(`${f.lon},${f.lat};${r.dest.lon},${r.dest.lat}`);
+    const data = await osrmFetch(`${f.lon},${f.lat};${r.dest.lon},${r.dest.lat}`, null, r.profile);
     if(!S || S.route !== r) return;
     applyOsrm(r, data); r.hz=null; r.lim=null;
     drawRoute(r, false);
     S.seg=0; S.progress=0; S.said={}; S.hzSaid={}; S.limSaid={}; S.off=0; S.offSaid=false;
-    if(!isReroute){ map.setView([f.lat, f.lon], 17); say(t("v_heading", {n:destName(r), t:spokenDur(r.duration)}), true); }
+    if(!isReroute){
+      map.setView([f.lat, f.lon], 17); say(t("v_heading", {n:destName(r), t:spokenDur(r.duration)}), true);
+      weatherAt(r.dest).then(w => { if(S && S.route===r && w && w.warn){ say(t("wxWarn", {w:lc(t(w.key))})); toast(t("wxWarn", {w:lc(t(w.key))}), 5000); } }).catch(() => {});
+    }
     setTimeout(() => { if(S && S.route===r && S.lastFix) onFix({...S.lastFix, speed:null}); }, 0);
-    loadIntel(r).then(() => { if(S && S.route===r){ drawRoute(r, false); } });
-    if(ttKey()){ S.inc=[]; liveTraffic(r, f, true); }
+    if(r.profile!=="bike"){
+      loadIntel(r).then(() => { if(S && S.route===r){ drawRoute(r, false); } });
+      if(ttKey()){ S.inc=[]; liveTraffic(r, f, true); }
+    }
   }catch(e){ toast(t("routeFail"), 4000); }
   finally{ if(S) S.routing = false; }
 }
@@ -1341,6 +1593,34 @@ async function liveTraffic(r, f, first){
       S.tt = {secs:tr.secs, prog:S.progress, at:Date.now(), arrive};
     }
   }finally{ if(S) S.ttBusy=false; }
+}
+// ---------- Examiner mode ----------
+function exLine(st){
+  if(st.icon==="flag") return t("ex_end");
+  if(st.icon==="rb") return st.exit ? t("ex_rb", {n:st.exit}) : t("ex_rbThrough");
+  const side = /left/.test(st.mod) ? "left" : /right/.test(st.mod) ? "right" : null;
+  if(!side) return t("ex_ahead");
+  if(st.mtype==="end of road") return t("ex_endroad_"+side);
+  if(/slight/.test(st.mod) || st.mtype==="fork") return t("ex_bear_"+side);
+  return t("ex_next_"+side);
+}
+// Two "pull in and stop" requests at random calm spots, like the real test.
+function planPullIns(r){
+  const c=[], st=r.steps||[];
+  for(let i=0;i<st.length-1;i++){ const a=st[i].along+150, b=st[i+1].along-250; if(b-a>150 && a>400 && b<r.total-400) c.push(a+(b-a)*Math.random()*.6); }
+  for(let i=c.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [c[i],c[j]]=[c[j],c[i]]; }
+  return c.slice(0,2).sort((x,y) => x-y).map(along => ({along, state:"wait"}));
+}
+function examinerTasks(f, kmh, r){
+  const tk = S.ex.find(x => x.state==="wait" || x.state==="pull"); if(!tk) return;
+  if(tk.state==="wait" && S.progress >= tk.along){
+    const busy = (r.hz||[]).some(h => h.along > S.progress && h.along-S.progress < 150);
+    if(!busy && (kmh==null || kmh < 70)){ say(t("ex_pull")); tk.state="pull"; tk.at=S.progress; tk.stopT=null; } else tk.along += 100;
+  } else if(tk.state==="pull"){
+    if(f.speed!=null && f.speed < 1.5){ tk.stopT = tk.stopT || Date.now(); if(Date.now()-tk.stopT > 6000){ say(t("ex_check")+" "+t("ex_move")); tk.state="done"; tk.ok=true; } }
+    else tk.stopT = null;
+    if(tk.state==="pull" && S.progress - tk.at > 500) tk.state="skip";
+  }
 }
 function updateAlerts(r){
   const pr=S.progress; let banner=null;
@@ -1404,7 +1684,7 @@ function onFix(f){
   if(follow) map.panTo([f.lat,f.lon], {animate:true, duration:.4});
 
   const kmh = f.speed!=null && f.speed>=0 ? Math.round(f.speed*3.6) : null;
-  if(r.isDest && !r.pts){ setDial(kmh); checkLimit(f, hdg); routeFromHere(f, false); return; }
+  if(r.isDest && !r.pts){ setDial(kmh, false, r.profile==="bike"); if(r.profile!=="bike") checkLimit(f, hdg); routeFromHere(f, false); return; }
   if(!r.pts) return;
 
   const p = pxy(r.o, f.lat, f.lon);
@@ -1436,6 +1716,7 @@ function onFix(f){
   showSign(step, fmtDist(dist), false, next && next.icon!=="flag" && next.along-step.along < 300 ? next : null);
   const k = S.said[idx] || (S.said[idx] = {});
   const prevAlong = idx>0 ? r.steps[idx-1].along : 0;
+  if(settings.examiner && !r.isDest && !k.ex && dist <= 170){ k.ex=k.km=k.far=k.near=true; if(step.icon==="flag") S.arrSaid=true; say(exLine(step), true); }
   if(!k.km && dist <= 1100 && dist > 700 && (step.along - prevAlong) > 1500){ k.km=true; say(t("v_km", {s:lc(step.text)})); }
   if(!k.far && dist <= 220 && dist > 70 && (step.along - prevAlong) > 260){ k.far=true; say(t("v_in", {d:spokenDist(dist), s:lc(step.text)})); }
   if(!k.near && dist <= 45){
@@ -1450,6 +1731,12 @@ function onFix(f){
 }
 // Speed, limits, alerts, recording and stats: shared by every fix
 function finishFix(f, kmh, hdg, r, onRoute){
+  if(r.profile==="bike"){
+    setDial(kmh, false, true);
+    if(onRoute) updateAlerts(r); else $("alert").hidden=true;
+    if(S.mode==="gps") record(f, kmh, r, false);
+    updateStats(); return;
+  }
   if(onRoute && r.lim){ const L0=limitAt(r, S.progress); if(L0) setLimit(L0, true); } else checkLimit(f, hdg);
   const over = kmh!=null && SL.limit && kmh > SL.limit.kmh + 3;
   S.overN = over ? S.overN+1 : 0;
@@ -1458,6 +1745,7 @@ function finishFix(f, kmh, hdg, r, onRoute){
   if(onRoute) updateAlerts(r); else $("alert").hidden=true;
   if(ttKey() && r.pts && S.ttAt && Date.now()-S.ttAt > 5*60000) liveTraffic(r, f, false);
   if(S.mode==="gps") record(f, kmh, r, onRoute);
+  if(S.ex && onRoute) examinerTasks(f, kmh, r);
   updateStats();
 }
 function updateStats(){
@@ -1491,7 +1779,7 @@ function finish(){
   } else {
     showSign({icon:"flag"}, t("done"), false);
     $("signInstr").textContent = S.mode==="sim" ? t("rehDone") : t("routeDone", {id:S.route.id, m:mins});
-    say(S.mode==="sim" ? t("v_reh") : t("v_done"), true);
+    if(!(settings.examiner && S.arrSaid)) say(S.mode==="sim" ? t("v_reh") : t("v_done"), true);
     if(S.mode!=="sim"){ (log[S.route.id] = log[S.route.id]||[]).push({date:new Date().toISOString(), mins}); store.set("ttr-log", log); }
   }
   $("alert").hidden = true;
@@ -1503,18 +1791,30 @@ function finish(){
 function buildReport(){
   const R=S.rec, secs=(Date.now()-S.startedAt)/1000, r=S.route;
   if(secs < 60 || R.dist < 300) return null;
+  if(r.profile==="bike") return {ride:true, rid:null, name:destName(r), date:Date.now(), mins:Math.max(1, Math.round(secs/60)), km:R.dist/1000,
+    avg:Math.round(R.dist/secs*3.6), max:Math.round(R.maxV*3.6), climb: r.elev ? r.elev.climb : null, score:100};
   const stops = Object.values(R.stopMin), rolled = stops.filter(s => s.v >= 1.0);
   const events = [
     ...R.speeding.map(e => ({k:"speed", ...e})),
     ...R.brakes.map(e => ({k:"brake", ...e})),
     ...rolled.map(s => ({k:"roll", lat:s.lat, lon:s.lon, v:Math.round(s.v*3.6)})),
   ];
-  const score = Math.max(0, Math.min(100, 100 - 6*R.speeding.length - 5*R.brakes.length - 8*rolled.length));
+  const pulls = S.ex ? [S.ex.filter(x => x.ok).length, S.ex.length] : null, missed = S.ex ? S.ex.filter(x => x.state==="skip").length : 0;
+  const score = Math.max(0, Math.min(100, 100 - 6*R.speeding.length - 5*R.brakes.length - 8*rolled.length - 5*missed));
   return {rid: r.isDest ? null : r.id, name: r.isDest ? destName(r) : routeName(r), date: Date.now(), mins: Math.max(1, Math.round(secs/60)),
     km: R.dist/1000, avg: Math.round(R.dist/secs*3.6), max: Math.round(R.maxV*3.6), sp: R.speeding.length, br: R.brakes.length,
-    st: [stops.length-rolled.length, stops.length], events, score};
+    st: [stops.length-rolled.length, stops.length], pull: pulls, events, score};
 }
 function showReport(rep){
+  if(rep.ride){
+    const stat = (l, v) => `<div><b>${esc(v)}</b><span>${esc(l)}</span></div>`;
+    $("report").dataset.g = "a"; $("rArc").style.strokeDasharray = `276.5 400`;
+    $("rScore").textContent = num(rep.km, rep.km < 10 ? 1 : 0); $("rGrade").textContent = t("rideDone");
+    $("rSub").textContent = `${rep.name} · ${dayFmt(rep.date)} ${hhmm(rep.date)}`;
+    $("rStats").innerHTML = stat(t("rep_time"), `${rep.mins} min`) + stat(t("rep_dist"), `${num(rep.km,1)} km`) + stat(t("rep_avg"), `${rep.avg} km/h`) + stat(t("rep_max"), `${rep.max} km/h`) + (rep.climb!=null ? stat(t("rep_climb"), `${rep.climb} m`) : "");
+    $("rEvents").innerHTML = ""; $("report").classList.add("ride"); document.querySelector("#report .kicker").textContent = t("rideTitle"); $("report").hidden = false; return;
+  }
+  $("report").classList.remove("ride"); document.querySelector("#report .kicker").textContent = t("rep_title");
   const g=grade(rep.score), C=276.5;
   $("rArc").style.strokeDasharray = `${C*rep.score/100} 400`;
   $("report").dataset.g = g;
@@ -1523,7 +1823,7 @@ function showReport(rep){
   $("rSub").textContent = `${rep.name} · ${dayFmt(rep.date)} ${hhmm(rep.date)}`;
   const stat = (l, v) => `<div><b>${esc(v)}</b><span>${esc(l)}</span></div>`;
   $("rStats").innerHTML = stat(t("rep_time"), `${rep.mins} min`) + stat(t("rep_dist"), `${num(rep.km,1)} km`) + stat(t("rep_avg"), `${rep.avg} km/h`) +
-    stat(t("rep_max"), `${rep.max} km/h`) + stat(t("rep_speeding"), rep.sp) + stat(t("rep_brakes"), rep.br) + (rep.st[1] ? stat(t("rep_stops"), `${rep.st[0]}/${rep.st[1]}`) : "");
+    stat(t("rep_max"), `${rep.max} km/h`) + stat(t("rep_speeding"), rep.sp) + stat(t("rep_brakes"), rep.br) + (rep.st[1] ? stat(t("rep_stops"), `${rep.st[0]}/${rep.st[1]}`) : "") + (rep.pull && rep.pull[1] ? stat(t("rep_pull"), `${rep.pull[0]}/${rep.pull[1]}`) : "");
   const icon = {speed:"speed", brake:"warn", roll:"stop"};
   $("rEvents").innerHTML = rep.events.length ? rep.events.map(e => `<div class="ev ev-${e.k}">${ico(e.k==="roll"?"stop":e.k==="speed"?"speed":"bump")}<span>${esc(
       e.k==="speed" ? t("ev_speed",{v:e.v, l:e.l}) : e.k==="brake" ? t("ev_brake",{v:e.v}) : t("ev_roll",{v:e.v}))}</span></div>`).join("")
@@ -1553,7 +1853,7 @@ function applyLang(){
   ROUTES.forEach(r => { if(r.raw) applyOsrm(r, r.raw); else if(r.ok===false) fallbackRoute(r); });
   if(dest && dest.raw && !S) applyOsrm(dest, dest.raw);
   renderCats(); renderNear(); renderPlaces(); renderRecent(); renderExplore(); renderRoutes(); renderReports(); renderPrep(); renderSwitches(); setVoiceBtn(); pickVoice();
-  renderDestCard(); renderPt(); renderKey();
+  renderDestCard(); renderPt(); renderKey(); renderWx(); renderBikeSpeed();
   if(S) updateStats();
 }
 
@@ -1562,7 +1862,7 @@ function applyLang(){
 // =====================================================================
 (async function boot(){
   practice = ROUTES.find(r => r.id===store.get("ttr-last", 1)) || ROUTES[0];
-  applyMapStyle(); applyLang(); placeFabs(); applyCamLayer(); applyTraffic();
+  applyMapStyle(); applyLang(); placeFabs(); applyCamLayer(); applyTraffic(); drawCar();
   let tb = store.get("ttr-tab", "go"); if(tb==="practice") tb="test"; if(!["go","explore","test","more"].includes(tb)) tb="go";
   showTab(tb);
   try{

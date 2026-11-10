@@ -59,6 +59,13 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 .pin svg{width:34px;height:44px;filter:drop-shadow(0 0 10px rgba(56,225,255,.6))}
 .poi{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:var(--glass-2);color:var(--amber);border:1.5px solid var(--amber);box-shadow:0 0 12px rgba(255,181,71,.35)}
 .poi svg{width:15px;height:15px;stroke-width:2.2}
+.poi.shut{opacity:.55}
+.plm{--c:var(--cyan);position:relative;width:24px;height:24px;border-radius:8px;display:grid;place-items:center;background:rgba(8,13,24,.9);color:var(--c);border:1.5px solid var(--c);box-shadow:0 2px 8px rgba(0,0,0,.5)}
+.plm svg{width:13px;height:13px;stroke-width:2.3}
+.plm .dot{position:absolute;right:-3px;top:-3px;width:8px;height:8px;border-radius:50%;border:1.5px solid #05080f}
+.plm .dot.on{background:var(--green)}.plm .dot.off{background:var(--red)}
+.carmk{width:34px;height:34px;border-radius:12px;display:grid;place-items:center;background:var(--violet);color:#fff;border:2px solid #fff;box-shadow:0 0 14px rgba(143,124,255,.8)}
+.carmk svg{width:19px;height:19px;stroke-width:2.2}
 .poi.ex{color:var(--green);border-color:var(--green);box-shadow:0 0 12px rgba(51,227,161,.35)}
 .poi.ex.t-heritage{color:var(--amber);border-color:var(--amber)}.poi.ex.t-coast,.poi.ex.t-view{color:var(--cyan);border-color:var(--cyan);box-shadow:0 0 12px rgba(56,225,255,.35)}
 .hzm{width:22px;height:22px;border-radius:7px;display:grid;place-items:center;background:var(--glass-2);color:var(--c);border:1.5px solid var(--c);box-shadow:0 0 10px color-mix(in srgb,var(--c) 45%,transparent)}
@@ -217,6 +224,45 @@ h2{font-family:var(--display);font-weight:700;font-size:26px;margin:0 4px 12px;l
 .eta span{color:var(--muted);font-family:var(--display);font-size:15px}
 .eta svg{filter:drop-shadow(0 0 6px rgba(56,225,255,.6))}
 .eta.wait{color:var(--muted);font-size:13.5px}
+.oc{display:inline-block;padding:1px 7px;border-radius:6px;font-family:var(--display);font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;vertical-align:1px}
+.oc.on{color:var(--green);background:rgba(51,227,161,.12);border:1px solid rgba(51,227,161,.35)}
+.oc.off{color:var(--red);background:rgba(255,79,109,.1);border:1px solid rgba(255,79,109,.35)}
+.item .rt{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+.subact{display:flex;gap:12px;align-items:center}
+.sub .mini{padding:3px 9px;border-radius:999px;border:1px solid var(--edge-2);color:var(--muted)}
+.sub .mini.on{color:var(--cyan-ink);background:var(--green);border-color:var(--green)}
+.scan{display:flex;gap:8px;justify-content:center;padding:18px}
+.scan i{width:9px;height:9px;border-radius:50%;background:var(--cyan);animation:scan 1s ease-in-out infinite}
+.scan i:nth-child(2){animation-delay:.15s}.scan i:nth-child(3){animation-delay:.3s}
+@keyframes scan{50%{transform:translateY(-6px);opacity:.4}}
+.link.inl{margin:0 0 0 6px;display:inline}
+.wx{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+.wx span{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:10px;background:var(--card);border:1px solid var(--edge);font-size:12.5px;color:#c9d6ea}
+.wx svg{width:16px;height:16px;color:var(--cyan)}
+.wx .wxm b{font-family:var(--display);font-size:16px;color:var(--text)}
+.wx .wet svg{color:var(--amber)}
+.eta.bk{color:var(--green)}.eta.bk svg{filter:drop-shadow(0 0 6px rgba(51,227,161,.6))}
+.bikeinfo{margin-top:10px}
+.bchips{display:flex;flex-wrap:wrap;gap:6px}
+.bchips span{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:10px;background:var(--card);border:1px solid var(--edge);font-size:12.5px;color:#c9d6ea}
+.bchips svg{width:16px;height:16px;color:var(--green)}
+.bchips .headwind{border-color:rgba(255,181,71,.4)}.bchips .headwind svg{color:var(--amber)}
+.bchips .tailwind{border-color:rgba(51,227,161,.4)}
+.elev{position:relative;height:56px;margin-top:10px;border-radius:12px;background:rgba(51,227,161,.04);border:1px solid rgba(51,227,161,.15);overflow:hidden}
+.elev svg{position:absolute;inset:0;width:100%;height:100%}
+.elev span{position:absolute;left:8px;font-family:var(--display);font-size:10.5px;color:var(--muted)}
+.elev span:first-of-type{top:4px}.elev span:last-of-type{bottom:4px}
+body.riding #dial .arc{stroke:var(--green);filter:drop-shadow(0 0 5px rgba(51,227,161,.8))}
+body.riding .sicon{color:var(--green)}
+#report.ride .note,#report.ride .evs{display:none}
+.carinfo{display:flex;align-items:center;gap:10px;margin-top:14px;color:var(--violet)}
+.carinfo b{font-family:var(--display);font-size:22px;color:var(--text)}
+.carinfo span{color:var(--muted);font-size:13px}
+.card.car{border-color:rgba(143,124,255,.5)}
+.card.car [data-save],.card.car #favBtn{display:none}
+.chip.hot{color:var(--cyan);border-color:rgba(56,225,255,.4)}
+.exset{margin-top:12px;background:linear-gradient(90deg,rgba(143,124,255,.12),var(--card));border:1px solid rgba(143,124,255,.3)}
+.exset .ico{flex:0 0 38px;height:38px;border-radius:12px;display:grid;place-items:center;color:var(--violet);background:rgba(143,124,255,.12)}
 .tdelay{margin-left:auto;padding:4px 9px;border-radius:8px;font-style:normal;font-size:12px;font-weight:600;color:var(--green);background:rgba(51,227,161,.1);border:1px solid rgba(51,227,161,.3)}
 .tdelay.bad{color:var(--amber);background:rgba(255,181,71,.1);border-color:rgba(255,181,71,.35)}
 .incs{display:grid;gap:6px;margin-top:12px}
@@ -428,13 +474,17 @@ h2{font-family:var(--display);font-weight:700;font-size:26px;margin:0 4px 12px;l
             <button class="x" id="destClose" type="button" aria-label="Close">×</button>
           </div>
           <div id="destBody"></div>
+          <div class="wx" id="destWx" hidden></div>
           <div class="gal" id="destGal" hidden></div>
           <div class="seg" id="modeSeg">
             <button type="button" data-mode="car"><svg class="i" viewBox="0 0 24 24"><path d="M5 16v-4l2-5h10l2 5v4M4 16h16M6 16v2.5M18 16v2.5M5 12h14"/></svg><span data-t="car"></span></button>
+            <button type="button" data-mode="bike"><svg class="i" viewBox="0 0 24 24"><circle cx="5.5" cy="16.5" r="3.5"/><circle cx="18.5" cy="16.5" r="3.5"/><path d="M5.5 16.5 9 9h6.5l3 7.5M9 9l3.5 7.5h-7M14 6h2.5"/></svg><span data-t="bike"></span></button>
             <button type="button" data-mode="pt"><svg class="i" viewBox="0 0 24 24"><rect x="5" y="3.5" width="14" height="14" rx="2.5"/><path d="M5 11h14M8 17.5V20M16 17.5V20"/></svg><span data-t="pt"></span></button>
           </div>
+          <div class="carinfo" id="carInfo" hidden></div>
           <div id="carBox">
             <div class="eta wait" id="destEta"></div>
+            <div class="bikeinfo" id="bikeInfo" hidden></div>
             <div class="incs" id="destInc" hidden></div>
             <div class="actions"><button class="btn primary" id="goBtn" type="button" data-t="go"></button></div>
           </div>
@@ -451,6 +501,8 @@ h2{font-family:var(--display);font-weight:700;font-size:26px;margin:0 4px 12px;l
             <p class="ptnote" data-th="ptCredit"></p>
           </div>
           <div class="chips">
+            <button class="chip hot" id="shareBtn" type="button" hidden></button>
+            <button class="chip" id="forgetCar" type="button" hidden data-t="forget"></button>
             <button class="chip" id="favBtn" type="button"></button>
             <button class="chip" data-save="home" type="button" data-t="setHome"></button>
             <button class="chip" data-save="work" type="button" data-t="setWork"></button>
@@ -464,7 +516,7 @@ h2{font-family:var(--display);font-weight:700;font-size:26px;margin:0 4px 12px;l
       <div class="sub"><span data-t="nearby"></span></div>
       <div class="cats" id="cats"></div>
       <div id="nearWrap" hidden>
-        <div class="sub"><span id="nearTitle"></span><button type="button" id="nearClose" data-t="clear"></button></div>
+        <div class="sub"><span id="nearTitle"></span><span class="subact"><button type="button" class="mini" id="nearOpen" data-t="openNow"></button><button type="button" id="nearClose" data-t="clear"></button></span></div>
         <div class="list" id="nearList"></div>
       </div>
       <div id="recentWrap" hidden>
@@ -490,6 +542,7 @@ h2{font-family:var(--display);font-weight:700;font-size:26px;margin:0 4px 12px;l
       <h2><span data-t="practiceTitle"></span> <span id="loadState" style="font-family:var(--body);font-weight:500;font-size:12.5px;color:var(--muted)"></span></h2>
       <div class="list" id="routeList"></div>
       <div class="intel" id="intel"></div>
+      <div class="set exset"><span class="ico"><svg class="i" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V2.5h6V4M8.5 10l1.5 1.5L13 8.5M8.5 15.5h7"/></svg></span><div class="meta"><b data-t="examiner_t"></b><small data-t="examiner_s"></small></div><button class="switch" role="switch" data-set="examiner" aria-label="Examiner mode"></button></div>
       <div class="actions">
         <button class="btn ghost" id="rehearseBtn" disabled data-t="rehearse"></button>
         <button class="btn primary" id="driveBtn" disabled data-t="drive"></button>
@@ -515,6 +568,7 @@ h2{font-family:var(--display);font-weight:700;font-size:26px;margin:0 4px 12px;l
         <button type="button" data-style="light" data-t="light"></button>
         <button type="button" data-style="sat" data-t="sat"></button>
       </div>
+      <div class="set"><div class="meta"><b data-t="placesLayer_t"></b><small data-t="placesLayer_s"></small></div><button class="switch" role="switch" data-set="placesLayer" aria-label="Businesses on map"></button></div>
       <div class="sub"><span data-t="traffic"></span></div>
       <div class="set keyset">
         <div class="meta"><b data-t="tt_t"></b><small data-t="tt_s"></small>
@@ -523,6 +577,10 @@ h2{font-family:var(--display);font-weight:700;font-size:26px;margin:0 4px 12px;l
         </div>
       </div>
       <div class="set"><div class="meta"><b data-t="trafLayer_t"></b><small data-t="trafLayer_s"></small></div><button class="switch" role="switch" data-set="traffic" aria-label="Traffic on map"></button></div>
+      <div class="sub"><span data-t="cycling"></span></div>
+      <div class="set"><div class="meta"><b data-t="bikeSpeed_t"></b><small data-t="bikeSpeed_s"></small>
+        <div class="seg" id="bikeSpeed" style="margin:10px 0 0"><button type="button" data-speed="15">15</button><button type="button" data-speed="20">20</button><button type="button" data-speed="22">22</button><button type="button" data-speed="25">25</button><button type="button" data-speed="30">30</button></div></div></div>
+      <div class="set"><div class="meta"><b data-t="cycleLayer_t"></b><small data-t="cycleLayer_s"></small></div><button class="switch" role="switch" data-set="cycleLayer" aria-label="Cycle lanes"></button></div>
       <div class="sub"><span data-t="alerts"></span></div>
       <div class="set"><div class="meta"><b data-t="camLayer_t"></b><small data-t="camLayer_s"></small></div><button class="switch" role="switch" data-set="camLayer" aria-label="Cameras on map"></button></div>
       <div class="set"><div class="meta"><b data-t="cam_t"></b><small data-t="cam_s"></small></div><button class="switch" role="switch" data-set="camAlerts" aria-label="Camera alerts"></button></div>
