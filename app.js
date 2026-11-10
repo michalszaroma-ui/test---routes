@@ -301,7 +301,10 @@ async function reverseLabel(lat, lon){
 }
 
 // ---------- Live traffic (TomTom; needs the user's own free key) ----------
-const ttKey = () => (settings.ttKey||"").trim();
+// Built-in TomTom key so everyone who opens the app gets live traffic. Restrict it to your GitHub Pages domain on my.tomtom.com.
+const BUILTIN_TT = "yqBvVxVgZtwoG3OpNqyR7akIYngVyxIj";
+const ownTtKey = () => (settings.ttKey||"").trim();
+const ttKey = () => ownTtKey() || BUILTIN_TT;
 async function ttRoute(from, to, key){
   const k = encodeURIComponent(key || ttKey());
   const res = await fetch(`https://api.tomtom.com/routing/1/calculateRoute/${from.lat.toFixed(6)},${from.lon.toFixed(6)}:${to.lat.toFixed(6)},${to.lon.toFixed(6)}/json?key=${k}&traffic=true&travelMode=car&routeRepresentation=summaryOnly&computeTravelTimeFor=all`);
@@ -395,18 +398,21 @@ map.attributionControl.setPrefix(false);
 let baseLayer=null;
 function applyMapStyle(){
   if(baseLayer) baseLayer.remove();
+  baseLayer = baseTiles().addTo(map);
+  document.body.dataset.map = settings.mapStyle;
+  document.querySelectorAll("#mapStyle button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.style===settings.mapStyle)));
+  if(rc.map){ if(rc.base) rc.base.remove(); rc.base = baseTiles().addTo(rc.map); }
+}
+function baseTiles(){
   const st = settings.mapStyle, k = ttKey();
   // With a TomTom key: TomTom's own day/night map. Without one: OpenStreetMap (darkened for the dark style).
   const tomtom = s => L.tileLayer(`https://{s}.api.tomtom.com/map/1/tile/basic/${s==="night"?"night":"main"}/{z}/{x}/{y}.png?key=${encodeURIComponent(k)}&tileSize=256&view=Unified`,
     {maxZoom:20, subdomains:"abcd", className: s==="night" ? "base-night" : "", attribution:'© <a href="https://www.tomtom.com/" target="_blank" rel="noopener">TomTom</a>'});
   const osm = dark => L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
     {maxZoom:20, maxNativeZoom:19, className: dark ? "base-osm-dark" : "", attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'});
-  baseLayer = st==="sat"
+  return st==="sat"
     ? L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {maxZoom:19, maxNativeZoom:18, attribution:"Imagery © Esri"})
     : k ? tomtom(st==="light" ? "main" : "night") : osm(st!=="light");
-  baseLayer.addTo(map);
-  document.body.dataset.map = st;
-  document.querySelectorAll("#mapStyle button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.style===st)));
 }
 let routeLayer=null, doneLayer=null, stopMarkers=[], meMarker=null, hereMarker=null;
 const markLayer = L.layerGroup().addTo(map), poiLayer = L.layerGroup().addTo(map), camLayer = L.layerGroup();
@@ -579,6 +585,7 @@ function showTab(tb){
   document.querySelectorAll("#tabs [data-tab]").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab===tb)));
   $("sheet").classList.remove("collapsed"); $("panes").scrollTop = 0;
   refreshMap();
+  if(tb==="go") renderRain();
 }
 $("tabs").addEventListener("click", e => { const b=e.target.closest("[data-tab]"); if(b) showTab(b.dataset.tab); });
 // Bottom sheet: tap the handle to toggle; swipe it (or the panel when scrolled to the top) down to close and up to open.
@@ -664,6 +671,7 @@ function renderPlaces(){
   favs.forEach((f,i) => chips.push(`<button class="chip" type="button" data-fav="${i}">${ico("star")}${esc(f.label)}</button>`));
   chips.push(`<button class="chip" type="button" data-parkhere>${ico("park")}${t("parkHere")}</button>`);
   $("places").innerHTML = chips.join(""); $("places").hidden = !chips.length;
+  if(typeof rc!=="undefined" && tab==="go" && !S) renderRain(true);
   renderSaved();
 }
 $("places").addEventListener("click", e => {
@@ -1333,10 +1341,10 @@ $("prepList").addEventListener("click", e => { const b=e.target.closest("[data-k
 // =====================================================================
 $("mapStyle").addEventListener("click", e => { const b=e.target.closest("[data-style]"); if(b){ settings.mapStyle=b.dataset.style; saveSettings(); applyMapStyle(); applyTraffic(); } });
 function renderKey(msg, cls){
-  const k=ttKey();
-  $("ttStatus").className = "kstat " + (cls || (k ? "ok" : ""));
-  $("ttStatus").textContent = msg || (k ? t("tt_have",{k:k.slice(-4)}) : t("tt_none"));
-  $("ttRemove").hidden = !k;
+  const own=ownTtKey();
+  $("ttStatus").className = "kstat " + (cls || "ok");
+  $("ttStatus").textContent = msg || (own ? t("tt_have",{k:own.slice(-4)}) : t("tt_builtin"));
+  $("ttRemove").hidden = !own;
 }
 $("ttSave").onclick = async () => {
   const k=$("ttKey").value.trim(); if(!k) return;
@@ -1842,6 +1850,118 @@ function drawTrack(track, rep){
 }
 
 // =====================================================================
+// Commute rain check: radar of the last 2 hours + 15-minute rain forecast along Home <-> Work
+// =====================================================================
+var rc = {map:null, base:null, marks:null, layers:[], frames:[], idx:0, timer:null, at:0, key:"", data:null, ready:false, busy:false};
+function commute(){
+  if(!places.home || !places.work) return null;
+  const H=places.home, W=places.work;
+  const nearWork = here && freshHere() ? hav(here.lat,here.lon,W.lat,W.lon) < hav(here.lat,here.lon,H.lat,H.lon) : new Date().getHours() >= 12;
+  const from = nearWork ? W : H, to = nearWork ? H : W;
+  return {from, to, toHome:nearWork, secs: hav(from.lat,from.lon,to.lat,to.lon)*1.3/bikeMs()};
+}
+async function rainForecast(c){
+  const mid={lat:(c.from.lat+c.to.lat)/2, lon:(c.from.lon+c.to.lon)/2}, pts=[c.from, mid, c.to];
+  const res = await fetchT(`https://api.open-meteo.com/v1/forecast?latitude=${pts.map(p => (+p.lat).toFixed(3)).join(",")}&longitude=${pts.map(p => (+p.lon).toFixed(3)).join(",")}&minutely_15=precipitation&hourly=precipitation_probability&forecast_minutely_15=16&forecast_hours=4&timezone=auto`, {}, 9000);
+  if(!res.ok) throw new Error("forecast "+res.status);
+  let j = await res.json(); if(!Array.isArray(j)) j=[j];
+  const now=Date.now(), slots=new Map(); let prob=0;
+  j.forEach(loc => {
+    const off=(loc.utc_offset_seconds||0)*1000, m=loc.minutely_15||{}, h=loc.hourly||{};
+    (m.time||[]).forEach((tm,i) => {
+      const ts=Date.parse(tm+"Z")-off; if(ts < now-15*60000 || ts > now+3*3600000) return;
+      const k=Math.round(ts/900000), s=slots.get(k) || {t:ts, mm:0}; s.mm=Math.max(s.mm, (m.precipitation||[])[i]||0); slots.set(k, s);
+    });
+    (h.time||[]).forEach((tm,i) => { const ts=Date.parse(tm+"Z")-off; if(ts >= now-3600000 && ts <= now+3*3600000) prob=Math.max(prob, (h.precipitation_probability||[])[i]||0); });
+  });
+  return {slots:[...slots.values()].sort((a,b) => a.t-b.t).slice(0,12), prob, at:now};
+}
+function rainVerdict(d, c){
+  const wet = s => s.mm >= 0.1, sl=d.slots;
+  if(!sl.length) return {cls:"", text:t("rc_fail")};
+  if(wet(sl[0])){
+    const dry = sl.findIndex((s,i) => i>0 && !wet(s) && (!sl[i+1] || !wet(sl[i+1])));
+    return {cls:"wet", text: t("rc_now") + " " + (dry>0 ? t("rc_dryFrom",{t:hhmm(sl[dry].t)}) : t("rc_noDry"))};
+  }
+  const first = sl.find(wet), rideEnd = Date.now() + c.secs*1000 + 10*60000;
+  if(first && first.t <= rideEnd) return {cls:"wet", text:t("rc_ride",{t:hhmm(first.t)})};
+  if(first) return {cls:"soon", text:t("rc_later",{t:hhmm(first.t)})};
+  if(d.prob >= 50) return {cls:"soon", text:t("rc_showers",{p:d.prob})};
+  return {cls:"dry", text:t("rc_dry")};
+}
+async function radarFrames(){
+  const j = await (await fetchT("https://api.rainviewer.com/public/weather-maps.json", {}, 8000)).json();
+  return ((j.radar && j.radar.past) || []).map(f => ({time:f.time*1000, url:`${j.host}${f.path}/256/{z}/{x}/{y}/2/1_1.png`}));
+}
+function rainMapSetup(c){
+  if(!rc.map){
+    rc.map = L.map("rainMap", {zoomControl:false, attributionControl:true, scrollWheelZoom:false, doubleClickZoom:false, boxZoom:false, keyboard:false});
+    rc.map.attributionControl.setPrefix(false);
+    rc.base = baseTiles().addTo(rc.map); rc.marks = L.layerGroup().addTo(rc.map);
+  }
+  rc.map.invalidateSize();
+  rc.marks.clearLayers();
+  const a=[c.from.lat,c.from.lon], b=[c.to.lat,c.to.lon], dot = (p, cls, label) => L.marker(p, {keyboard:false, interactive:false, icon:L.divIcon({className:"", iconSize:[26,26], iconAnchor:[13,13], html:`<div class="rcdot ${cls}">${ico(label)}</div>`})}).addTo(rc.marks);
+  L.polyline([a,b], {color:"#33e3a1", weight:3, dashArray:"2 7", lineCap:"round"}).addTo(rc.marks);
+  dot(a, "from", c.toHome ? "work" : "home"); dot(b, "to", c.toHome ? "home" : "work");
+  rc.map.fitBounds(L.latLngBounds([a,b]).pad(1.6), {maxZoom:11});
+}
+function radarTick(){
+  clearTimeout(rc.timer);
+  const n=rc.layers.length; if(!n) return;
+  const visible = tab==="go" && !S && !$("rainBox").hidden && !$("sheet").classList.contains("collapsed") && document.visibilityState==="visible";
+  if(visible){
+    rc.layers[rc.idx].setOpacity(0); rc.idx=(rc.idx+1)%n; rc.layers[rc.idx].setOpacity(.8);
+    const f=rc.frames[rc.idx], ago=Math.round((Date.now()-f.time)/60000);
+    $("rcTime").textContent = `${hhmm(f.time)} · ${ago<=5 ? t("rc_live") : t("rc_ago",{m:ago})}`;
+    $("rcTime").classList.toggle("live", rc.idx===n-1);
+  }
+  rc.timer = setTimeout(radarTick, !visible ? 3000 : rc.idx===n-1 ? 1800 : 380);
+}
+async function loadRadar(){
+  try{
+    const frames = await radarFrames(); if(!frames.length) return;
+    rc.layers.forEach(l => l.remove());
+    rc.frames = frames;
+    rc.layers = frames.map((f,i) => L.tileLayer(f.url, {maxNativeZoom:7, maxZoom:14, opacity: i===frames.length-1 ? .8 : 0, zIndex:5,
+      attribution: i===0 ? 'Radar © <a href="https://www.rainviewer.com" target="_blank" rel="noopener">RainViewer</a>' : ""}).addTo(rc.map));
+    rc.idx = frames.length-1; radarTick();
+  }catch(e){ $("rcTime").textContent = t("rc_radarFail"); }
+}
+function renderBars(d, c){
+  if(!d || !d.slots.length){ $("rcBars").innerHTML=""; return; }
+  const rideEnd = Date.now() + c.secs*1000;
+  $("rcBars").innerHTML = `<div class="bwrap">${d.slots.map(s => {
+      const h = s.mm<0.05 ? 3 : Math.min(100, 18 + s.mm/1.2*82), ride = s.t <= rideEnd + 5*60000;
+      return `<i class="${s.mm>=0.1?"w":""} ${ride?"ride":""}" style="height:${h.toFixed(0)}%" title="${hhmm(s.t)} · ${s.mm.toFixed(1)} mm"></i>`; }).join("")}</div>
+    <div class="blabels">${d.slots.filter((_,i) => i%4===0).map(s => `<span>${hhmm(s.t)}</span>`).join("")}<span></span></div>`;
+}
+async function renderRain(force){
+  const c = commute(), box=$("rainBox");
+  if(!c){ box.hidden=false; box.classList.add("setup"); $("rcTitle").textContent=t("rc_title"); $("rcVerdict").textContent=t("rc_setup"); $("rcBars").innerHTML=""; $("rcRide").hidden=true; return; }
+  box.hidden=false; box.classList.remove("setup"); $("rcRide").hidden=false;
+  $("rcTitle").textContent = t(c.toHome ? "rc_title" : "rc_title_work");
+  $("rcRide").innerHTML = `${ico("bike")}${t(c.toHome ? "rc_rideHome" : "rc_rideWork")}`;
+  const key = `${c.from.lat},${c.from.lon}>${c.to.lat},${c.to.lon}`;
+  requestAnimationFrame(() => { rainMapSetup(c); });
+  if(!rc.ready){ rc.ready=true; setTimeout(loadRadar, 60); setInterval(() => { if(tab==="go" && !S){ loadRadar(); renderRain(true); } }, 10*60000); }
+  if(!force && rc.key===key && rc.data && Date.now()-rc.data.at < 10*60000){ showRain(c); return; }
+  if(rc.busy) return; rc.busy=true; rc.key=key;
+  if(!rc.data){ $("rcVerdict").textContent=t("rc_loading"); }
+  try{ rc.data = await rainForecast(c); showRain(c); }
+  catch(e){ $("rcVerdict").textContent=t("rc_fail"); $("rainBox").className="rain"; }
+  finally{ rc.busy=false; }
+}
+function showRain(c){
+  const v = rainVerdict(rc.data, c);
+  $("rainBox").className = "rain " + v.cls;
+  $("rcVerdict").textContent = v.text;
+  renderBars(rc.data, c);
+  $("rcFoot").textContent = t("rc_updated", {t:hhmm(rc.data.at)});
+}
+$("rcRide").onclick = () => { const c=commute(); if(!c) return; travelMode="bike"; store.set("ttr-mode","bike"); openPlace(c.to, c.toHome ? "home" : "work"); };
+
+// =====================================================================
 // Language
 // =====================================================================
 function applyLang(){
@@ -1854,6 +1974,7 @@ function applyLang(){
   if(dest && dest.raw && !S) applyOsrm(dest, dest.raw);
   renderCats(); renderNear(); renderPlaces(); renderRecent(); renderExplore(); renderRoutes(); renderReports(); renderPrep(); renderSwitches(); setVoiceBtn(); pickVoice();
   renderDestCard(); renderPt(); renderKey(); renderWx(); renderBikeSpeed();
+  if(rc.ready) renderRain();
   if(S) updateStats();
 }
 

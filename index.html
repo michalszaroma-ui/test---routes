@@ -255,6 +255,32 @@ h2{font-family:var(--display);font-weight:700;font-size:26px;margin:0 4px 12px;l
 body.riding #dial .arc{stroke:var(--green);filter:drop-shadow(0 0 5px rgba(51,227,161,.8))}
 body.riding .sicon{color:var(--green)}
 #report.ride .note,#report.ride .evs{display:none}
+/* Commute rain check */
+.rain{margin-top:14px;padding:14px;border-radius:20px;background:linear-gradient(160deg,rgba(76,141,255,.10),rgba(10,16,28,.6));border:1px solid rgba(110,160,255,.25)}
+.rain.dry{border-color:rgba(51,227,161,.35)}.rain.soon{border-color:rgba(255,181,71,.4)}.rain.wet{border-color:rgba(76,141,255,.6);box-shadow:0 0 24px rgba(76,141,255,.18)}
+.rctop{display:flex;gap:10px;align-items:flex-start}
+.rctop .meta{flex:1;min-width:0}
+.rctop .kicker{margin:0 0 4px;color:#7ab0ff}
+.rctop b{display:block;font-size:14.5px;font-weight:600;line-height:1.4;text-wrap:pretty}
+.rain.dry .rctop b{color:var(--green)}.rain.soon .rctop b{color:var(--amber)}.rain.wet .rctop b{color:#9cc4ff}
+.mini.go{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:12px;background:rgba(51,227,161,.12);border:1px solid rgba(51,227,161,.4);color:var(--green);font-weight:600;font-size:13px}
+.mini.go svg{width:18px;height:18px}
+.rain.setup .rmap,.rain.setup .bars,.rain.setup .rcfoot{display:none}
+.rmap{position:relative;height:150px;margin-top:12px;border-radius:14px;overflow:hidden;border:1px solid var(--edge)}
+#rainMap{position:absolute;inset:0;background:#0a0f18}
+#rainMap .leaflet-control-attribution{font-size:8.5px}
+.rtime{position:absolute;left:8px;top:8px;z-index:500;padding:3px 8px;border-radius:8px;background:rgba(5,8,15,.75);font-family:var(--display);font-size:12px;color:var(--muted);pointer-events:none}
+.rtime.live{color:#9cc4ff}
+.rcdot{width:26px;height:26px;border-radius:9px;display:grid;place-items:center;background:rgba(5,8,15,.85);border:1.5px solid var(--green);color:var(--green)}
+.rcdot.to{border-color:var(--cyan);color:var(--cyan)}
+.rcdot svg{width:14px;height:14px;stroke-width:2.3}
+.bars{margin-top:12px}
+.bwrap{display:flex;align-items:flex-end;gap:3px;height:46px}
+.bwrap i{flex:1;border-radius:3px 3px 1px 1px;background:rgba(130,180,255,.16)}
+.bwrap i.w{background:linear-gradient(180deg,#7ab0ff,#3f6fe0)}
+.bwrap i.ride{box-shadow:inset 0 -3px 0 var(--green)}
+.blabels{display:flex;justify-content:space-between;margin-top:5px;font-family:var(--display);font-size:11px;color:var(--dim)}
+.rcfoot{margin-top:8px;font-size:11.5px;color:var(--dim)}
 .carinfo{display:flex;align-items:center;gap:10px;margin-top:14px;color:var(--violet)}
 .carinfo b{font-family:var(--display);font-size:22px;color:var(--text)}
 .carinfo span{color:var(--muted);font-size:13px}
@@ -512,6 +538,13 @@ body.riding .sicon{color:var(--green)}
       </div>
 
       <div class="chips" id="places" style="margin-top:12px"></div>
+
+      <div class="rain" id="rainBox" hidden>
+        <div class="rctop"><div class="meta"><div class="kicker" id="rcTitle"></div><b id="rcVerdict"></b></div><button class="mini go" id="rcRide" type="button" hidden></button></div>
+        <div class="rmap"><div id="rainMap"></div><span class="rtime" id="rcTime"></span></div>
+        <div class="bars" id="rcBars"></div>
+        <div class="rcfoot" id="rcFoot"></div>
+      </div>
 
       <div class="sub"><span data-t="nearby"></span></div>
       <div class="cats" id="cats"></div>
