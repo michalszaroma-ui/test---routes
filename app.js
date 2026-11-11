@@ -2502,6 +2502,10 @@ function applyLang(){
 // =====================================================================
 // Boot
 // =====================================================================
+const APP_V = 13;
+// Shows which version is running, and reports script errors on screen so problems on the phone are visible.
+$("appVer").textContent = "Drive Ireland · v" + APP_V;
+window.addEventListener("error", e => { if(/\/(app|data|theory)\.js/.test(e.filename||"")) toast("Error: " + (e.message||"") + " (" + (e.filename||"").split("/").pop().split("?")[0] + ":" + e.lineno + ")", 8000); });
 (async function boot(){
   practice = ROUTES.find(r => r.id===store.get("ttr-last", 1)) || ROUTES[0];
   applyMapStyle(); applyLang(); placeFabs(); applyCamLayer(); applyTraffic(); drawCar();

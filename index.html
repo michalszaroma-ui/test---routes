@@ -126,6 +126,13 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 .qbtns{display:flex;gap:8px;margin-top:12px}
 .qdone{display:grid;gap:8px;margin-top:12px}.qdone>b{font-family:var(--display);font-size:22px;color:var(--cyan)}
 .qdone .tcard{flex-direction:row;text-align:left}.qdone .tpic{flex:0 0 80px;height:72px}
+.tsay{position:relative;margin-top:8px;padding:8px 38px 8px 10px;border-radius:12px;background:rgba(56,225,255,.07);border:1px solid rgba(56,225,255,.22);text-align:left}
+.tsay span{display:block;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--cyan);font-weight:700}
+.tsay p{margin:3px 0 0;font-size:12.5px;line-height:1.4;color:var(--text)}
+.tspk{position:absolute;right:6px;top:6px;width:28px;height:28px;border-radius:9px;display:grid;place-items:center;color:var(--cyan);background:rgba(56,225,255,.12)}
+.tspk svg{width:16px;height:16px}
+.qen{display:block;font-style:normal;font-size:13px;color:#ffd100;margin-top:2px}
+.appver{color:var(--dim);font-size:11.5px;text-align:center;margin:8px 0 0}
 .mvm{width:30px;height:30px;border-radius:10px;display:grid;place-items:center;background:var(--violet);color:#fff;border:2px solid #fff;box-shadow:0 0 14px rgba(143,124,255,.85)}
 .mvm svg{width:18px;height:18px;stroke-width:2.4}
 .rsi.mv{color:var(--violet);background:rgba(143,124,255,.12);border-color:rgba(143,124,255,.4)}
@@ -636,11 +643,11 @@ body.riding .sicon{color:var(--green)}
 
     <!-- TEST -->
     <section data-pane="test" hidden>
+      <div class="thentry" id="thEntry"></div>
       <div class="kicker" data-t="testKicker"></div>
       <h2><span data-t="practiceTitle"></span> <span id="loadState" style="font-family:var(--body);font-weight:500;font-size:12.5px;color:var(--muted)"></span></h2>
       <div class="list" id="routeList"></div>
       <div class="intel" id="intel"></div>
-      <div class="thentry" id="thEntry"></div>
       <div class="set exset"><span class="ico"><svg class="i" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V2.5h6V4M8.5 10l1.5 1.5L13 8.5M8.5 15.5h7"/></svg></span><div class="meta"><b data-t="examiner_t"></b><small data-t="examiner_s"></small></div><button class="switch" role="switch" data-set="examiner" aria-label="Examiner mode"></button></div>
       <div class="actions">
         <button class="btn ghost" id="rehearseBtn" disabled data-t="rehearse"></button>
@@ -699,6 +706,7 @@ body.riding .sicon{color:var(--green)}
       <div class="list" id="savedList"></div>
       <p class="note" data-t="moreNote"></p>
       <p class="note" data-th="credits"></p>
+      <p class="appver" id="appVer"></p>
     </section>
   </div>
 
@@ -752,8 +760,8 @@ body.riding .sicon{color:var(--green)}
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate.js"></script>
-<script src="data.js"></script>
-<script src="app.js"></script>
-<script src="theory.js"></script>
+<script src="data.js?v=13"></script>
+<script src="app.js?v=13"></script>
+<script src="theory.js?v=13"></script>
 </body>
 </html>

@@ -282,14 +282,14 @@ const LM = [
 const TX2 = {
   en:{title:"Theory test prep", kicker:"Signs, signals and lights", open:"Signs & signals", openSub:"All road signs, hand signals, Garda signals, lights and road markings, with a quiz", tabs:["Signs","Hand signals","Lights & lines","Quiz"],
     g:{all:"All", reg:"Regulatory", warn:"Warning", rw:"Roadworks", info:"Information", mw:"Motorway"}, search:"Search signs", driver:"Your hand signals (driver)", pointsman:"Signals to a Garda on point duty", garda:"Signals given by a Garda or warden", light:"Traffic lights", mark:"Road markings",
-    note:"Before the drive the tester asks you some Rules of the Road questions, shows you road signs to name, and asks you to demonstrate hand signals. Know each sign's shape and colour: circles give orders, yellow diamonds warn, orange is roadworks, rectangles inform.",
+    note:"Before the drive the tester shows you road signs and asks what they mean, asks a few Rules of the Road questions, and asks you to show hand signals. Answer like the “Say to the tester” line under each sign: what type of sign it is, its name, and what you do. Shapes help: red circles forbid, blue circles order, yellow diamonds warn, orange is roadworks, rectangles inform.",
     limits:"Default speed limits: motorways 120 km/h · national roads 100 (many national secondary roads now 80 where signed) · regional roads 80 · rural local roads 60 (since Feb 2025) · towns 50 · many urban streets 30. Signs always win.",
-    q:"What does this sign mean?", qs:"What does this signal mean?", score:"{a} of {b} right", next:"Next", again:"New quiz", missed:"Practise the ones you missed", none:"All correct, nice!", known:"{n} of {t} answered right at least once", src:"Sign pictures: Wikimedia Commons where available; meanings follow the RSA Rules of the Road. Signals from the Road Traffic (Traffic and Parking) Regulations.", modeSigns:"Signs", modeSignals:"Signals & lines", modeMixed:"Everything", close:"Close"},
+    q:"What does this sign mean?", qs:"What does this signal mean?", score:"{a} of {b} right", next:"Next", again:"New quiz", missed:"Practise the ones you missed", none:"All correct, nice!", known:"{n} of {t} answered right at least once", src:"Sign pictures: Wikimedia Commons where available; meanings follow the RSA Rules of the Road. Signals from the Road Traffic (Traffic and Parking) Regulations.", modeSigns:"Signs", modeSignals:"Signals & lines", modeMixed:"Everything", close:"Close", sayIt:"Say to the tester", modeCards:"Flashcards", fcAsk:"Name it out loud, then check.", fcShow:"Show answer", fcYes:"I knew it", fcNo:"Didn't know"},
   pl:{title:"Przygotowanie do pytań", kicker:"Znaki, sygnały i światła", open:"Znaki i sygnały", openSub:"Wszystkie znaki drogowe, sygnały ręczne, sygnały Gardy, światła i oznakowanie poziome, z quizem", tabs:["Znaki","Sygnały ręczne","Światła i linie","Quiz"],
     g:{all:"Wszystkie", reg:"Nakazy i zakazy", warn:"Ostrzegawcze", rw:"Roboty drogowe", info:"Informacyjne", mw:"Autostrada"}, search:"Szukaj znaku", driver:"Twoje sygnały ręczne (kierowca)", pointsman:"Sygnały do policjanta kierującego ruchem", garda:"Sygnały policjanta (Garda) lub opiekuna", light:"Sygnalizacja świetlna", mark:"Oznakowanie poziome",
     note:"Przed jazdą egzaminator zadaje kilka pytań z przepisów (Rules of the Road), pokazuje znaki do nazwania i prosi o pokazanie sygnałów ręcznych. Egzamin jest po angielsku, więc pod każdym znakiem jest też jego angielska nazwa. Kształt i kolor: koła nakazują lub zakazują, żółte romby ostrzegają, pomarańczowe to roboty, prostokąty informują.",
     limits:"Domyślne limity: autostrady 120 km/h · drogi krajowe 100 (wiele drugorzędnych krajowych teraz 80, jeśli oznakowano) · regionalne 80 · wiejskie drogi lokalne 60 (od lutego 2025) · miasta 50 · wiele ulic 30. Znaki zawsze mają pierwszeństwo.",
-    q:"Co oznacza ten znak?", qs:"Co oznacza ten sygnał?", score:"{a} z {b} dobrze", next:"Dalej", again:"Nowy quiz", missed:"Powtórz błędne", none:"Wszystko dobrze, brawo!", known:"{n} z {t} odpowiedzianych dobrze przynajmniej raz", src:"Obrazki znaków: Wikimedia Commons, gdy dostępne; znaczenia według RSA Rules of the Road. Sygnały według Road Traffic (Traffic and Parking) Regulations.", modeSigns:"Znaki", modeSignals:"Sygnały i linie", modeMixed:"Wszystko", close:"Zamknij"},
+    q:"Co oznacza ten znak?", qs:"Co oznacza ten sygnał?", score:"{a} z {b} dobrze", next:"Dalej", again:"Nowy quiz", missed:"Powtórz błędne", none:"Wszystko dobrze, brawo!", known:"{n} z {t} odpowiedzianych dobrze przynajmniej raz", src:"Obrazki znaków: Wikimedia Commons, gdy dostępne; znaczenia według RSA Rules of the Road. Sygnały według Road Traffic (Traffic and Parking) Regulations.", modeSigns:"Znaki", modeSignals:"Sygnały i linie", modeMixed:"Wszystko", close:"Zamknij", sayIt:"Powiedz egzaminatorowi (po angielsku)", modeCards:"Fiszki", fcAsk:"Nazwij znak na głos po angielsku, potem sprawdź.", fcShow:"Pokaż odpowiedź", fcYes:"Wiedziałem", fcNo:"Nie wiedziałem"},
 };
 const tt = k => (TX2[lang]||TX2.en)[k] ?? TX2.en[k];
 const fill = (s, v) => s.replace(/\{(\w+)\}/g, (m,k) => v[k]);
@@ -313,6 +313,31 @@ function upgrade(root){
     im.src = official(code);
   });
 }
+// What to say when the tester points at it (always English, the test is in English).
+const BLUE = new Set(["keepleft","keepright","eitherside","ahead","turnleft","turnright","leftahead","rightahead","minirb","cyclesonly","shared"]);
+const REDRING = new Set(["noentry","noright","noleft","nouturn","noovertake","nopark","clearway","sl30","sl50","sl60","sl80","sl100","sl120","nocycles","nohorses","nocarts","nopeds","novehicles","height","width","length","weight","axle","axles"]);
+function kindWord(x){
+  if(x.id==="stop") return "a regulatory sign. It's the only eight-sided sign";
+  if(x.id==="yield") return "a regulatory sign, the upside-down triangle";
+  if(/^sl\d/.test(x.id)) return "a regulatory sign: a speed limit. You must not go faster than the number shown";
+  if(BLUE.has(x.id)) return "a mandatory sign. A blue circle tells you what you must do";
+  if(REDRING.has(x.id)) return "a regulatory sign. A red circle tells you what you must not do";
+  return {reg:"a regulatory sign", warn:"a warning sign", rw:"a roadworks warning sign", info:"an information sign", mw:"a motorway sign"}[x.g] || "a sign";
+}
+function sayAnswer(x){
+  if(x.kind==="sign") return `That's ${kindWord(x)}. It means: ${x.en}. ${x.ex}`;
+  if(x.g==="driver" || x.g==="pointsman") return `${x.en}: ${x.ex}`;
+  if(x.g==="garda") return `${x.en.replace(/^Garda: /,"The Garda is signalling that ")}. ${x.ex}`;
+  return `${x.en}: ${x.ex}`;
+}
+function speakEn(text){
+  if(!("speechSynthesis" in window)) return;
+  try{ speechSynthesis.cancel(); }catch(e){}
+  const u = new SpeechSynthesisUtterance(text); u.lang = "en-IE"; u.rate = 0.95;
+  try{ const vs = speechSynthesis.getVoices().filter(v => /^en/i.test(v.lang)); const v = vs.find(v => /en[-_](IE|GB)/i.test(v.lang)) || vs[0]; if(v) u.voice = v; }catch(e){}
+  speechSynthesis.speak(u);
+}
+const sayBox = x => `<div class="tsay"><span>${esc(tt("sayIt"))}</span><p>“${esc(sayAnswer(x))}”</p><button type="button" class="tspk" data-say="${x.id}" aria-label="Listen">${ico("vol")}</button></div>`;
 const pic = x => `<span class="tpic" ${x.code ? `data-code="${x.code}"` : ""}>${svgOf(x)}</span>`;
 
 // ---------- progress (which ones you've got right) ----------
@@ -320,9 +345,9 @@ let known = store.get("ttr-th-known", {}), miss = store.get("ttr-th-miss", {});
 const saveProg = () => { store.set("ttr-th-known", known); store.set("ttr-th-miss", miss); };
 
 // ---------- overlay ----------
-let ttab = 0, tgroup = "all", tq = "", quiz = null;
+let ttab = 0, tgroup = "all", tq = "", quiz = null, qmode = "cards";
 function card(x){
-  return `<div class="tcard${known[x.id] ? " ok" : ""}">${pic(x)}<div class="tmeta"><b>${esc(nm(x))}</b>${lang==="pl" ? `<i>${esc(x.en)}</i>` : ""}<small>${esc(expl(x))}</small></div></div>`;
+  return `<div class="tcard${known[x.id] ? " ok" : ""}">${pic(x)}<div class="tmeta"><b>${esc(nm(x))}</b>${lang==="pl" ? `<i>${esc(x.en)}</i>` : ""}<small>${esc(expl(x))}</small>${sayBox(x)}</div></div>`;
 }
 function renderTheory(){
   const box = $("thBody"); if(!box) return;
@@ -366,9 +391,21 @@ function makeOpts(x){
   const pick = shuffle(same.length >= 3 ? same : other).filter((y,i,a) => a.findIndex(z => nm(z)===nm(y))===i && nm(y)!==nm(x)).slice(0,3);
   return shuffle([x, ...pick]);
 }
+let fc = null;
+function newCards(){ const fresh=shuffle(ITEMS.filter(x => !known[x.id])), rest=shuffle(ITEMS.filter(x => known[x.id])); fc = {list:[...fresh, ...rest].slice(0,20), i:0, shown:false, ok:0, bad:[]}; }
+function cardsHtml(){
+  if(!fc) newCards();
+  if(fc.i >= fc.list.length) return `<div class="qdone"><b>${esc(fill(tt("score"), {a:fc.ok, b:fc.list.length}))}</b>${fc.bad.map(id => card(BYID[id])).join("")}</div><div class="qbtns"><button class="btn primary" type="button" data-fc="new">${esc(tt("again"))}</button></div>`;
+  const x = fc.list[fc.i];
+  let h = `<div class="qhead"><span>${fc.i+1} / ${fc.list.length}</span><span>${esc(fill(tt("score"), {a:fc.ok, b:fc.i}))}</span></div><div class="qpic">${pic(x)}</div>`;
+  if(!fc.shown) return h + `<p class="qq">${esc(tt("fcAsk"))}</p><div class="qbtns"><button class="btn primary" type="button" data-fc="show">${esc(tt("fcShow"))}</button></div>`;
+  return h + `<p class="qq">${esc(nm(x))}${lang==="pl" ? ` <i class="qen">${esc(x.en)}</i>` : ""}</p>${lang==="pl" ? `<p class="qex">${esc(x.px)}</p>` : ""}${sayBox(x)}
+    <div class="qbtns"><button class="btn ghost" type="button" data-fc="bad">${esc(tt("fcNo"))}</button><button class="btn primary" type="button" data-fc="ok">${esc(tt("fcYes"))}</button></div>`;
+}
 function quizHtml(){
-  const modes = [["signs",tt("modeSigns")],["signals",tt("modeSignals")],["mixed",tt("modeMixed")]];
-  let h = `<div class="tchips">${modes.map(([k,l]) => `<button type="button" data-qm="${k}" aria-pressed="${!!quiz && quiz.mode===k}">${esc(l)}</button>`).join("")}</div>`;
+  const modes = [["cards",tt("modeCards")],["signs",tt("modeSigns")],["signals",tt("modeSignals")],["mixed",tt("modeMixed")]];
+  let h = `<div class="tchips">${modes.map(([k,l]) => `<button type="button" data-qm="${k}" aria-pressed="${qmode===k}">${esc(l)}</button>`).join("")}</div>`;
+  if(qmode==="cards") return h + cardsHtml();
   if(!quiz) newQuiz("signs");
   const q = quiz;
   if(q.i >= q.list.length){
@@ -382,7 +419,7 @@ function quizHtml(){
   h += q.opts.map((o,i) => { const st = q.picked==null ? "" : o.id===x.id ? "right" : i===q.picked ? "wrong" : "";
     return `<button type="button" class="qo ${st}" data-qo="${i}" ${q.picked!=null ? "disabled" : ""}>${esc(nm(o))}${lang==="pl" ? `<i>${esc(o.en)}</i>` : ""}</button>`; }).join("");
   h += `</div>`;
-  if(q.picked!=null) h += `<p class="qex">${esc(expl(x))}</p><div class="qbtns"><button class="btn primary" type="button" data-qa="next">${esc(tt("next"))}</button></div>`;
+  if(q.picked!=null) h += `<p class="qex">${esc(expl(x))}</p>${sayBox(x)}<div class="qbtns"><button class="btn primary" type="button" data-qa="next">${esc(tt("next"))}</button></div>`;
   return h;
 }
 function answer(i){
@@ -397,12 +434,20 @@ function answer(i){
 function openTheory(t){ if(t!=null) ttab=t; $("theory").hidden=false; renderTheory(); $("thBody").scrollTop=0; }
 window.openTheory = openTheory; window.renderTheory = renderTheory;
 document.addEventListener("click", e => {
-  const el = e.target.closest("[data-tt],[data-tg],[data-qo],[data-qa],[data-qm],[data-topen]"); if(!el) return;
+  const el = e.target.closest("[data-tt],[data-tg],[data-qo],[data-qa],[data-qm],[data-topen],[data-say],[data-fc]"); if(!el) return;
+  if(el.dataset.say){ const x=BYID[el.dataset.say]; if(x) speakEn(sayAnswer(x)); return; }
+  if(el.dataset.fc){
+    const a=el.dataset.fc;
+    if(a==="new") newCards();
+    else if(a==="show") fc.shown=true;
+    else { const x=fc.list[fc.i]; if(a==="ok"){ fc.ok++; known[x.id]=1; delete miss[x.id]; } else { fc.bad.push(x.id); miss[x.id]=1; } saveProg(); fc.i++; fc.shown=false; }
+    renderTheory(); $("thBody").scrollTop=0; return;
+  }
   if(el.dataset.topen!=null) return openTheory(+el.dataset.topen);
   if(el.dataset.tt!=null){ ttab=+el.dataset.tt; renderTheory(); $("thBody").scrollTop=0; }
   else if(el.dataset.tg){ tgroup=el.dataset.tg; renderTheory(); }
   else if(el.dataset.qo!=null) answer(+el.dataset.qo);
-  else if(el.dataset.qm){ newQuiz(el.dataset.qm); renderTheory(); }
+  else if(el.dataset.qm){ qmode = el.dataset.qm; if(qmode!=="cards") newQuiz(qmode); renderTheory(); }
   else if(el.dataset.qa==="next"){ quiz.i++; quiz.picked=null; if(quiz.i < quiz.list.length) quiz.opts = makeOpts(quiz.list[quiz.i]); renderTheory(); $("thBody").scrollTop=0; }
   else if(el.dataset.qa==="again"){ newQuiz(quiz.mode); renderTheory(); }
   else if(el.dataset.qa==="missed"){ newQuiz(quiz.mode, true); renderTheory(); }
