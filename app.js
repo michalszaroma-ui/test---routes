@@ -6,7 +6,7 @@ const store = {
   get(k, d){ try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch(e){ return d; } },
   set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
 };
-const settings = Object.assign({mapStyle:"dark", limits:true, limitVoice:true, speedWarn:true, camAlerts:true, hzAlerts:true, camLayer:true, traffic:true, ttKey:"", placesLayer:true, examiner:false, bikeSpeed:22, cycleLayer:false,
+const settings = Object.assign({mapStyle:"dark", limits:true, limitVoice:true, speedWarn:true, camAlerts:true, hzAlerts:true, camLayer:true, traffic:true, ttKey:"", placesLayer:true, examiner:false, bikeSpeed:22, cycleLayer:false, turnChime:true,
   lang: /^pl/i.test(navigator.language||"") ? "pl" : "en"}, store.get("ttr-settings", {}));
 const saveSettings = () => store.set("ttr-settings", settings);
 let lang = settings.lang;
@@ -82,6 +82,18 @@ function nearest(route, p, from, to, stopBelow){
   }
   return best || {d:Infinity, along:0, seg:0};
 }
+// Same, but a road the route drives out and back on (a turnabout) matches the pass going our way.
+function nearestDir(route, p, from, to, hdg){
+  if(hdg==null) return nearest(route, p, from, to);
+  let best=null, bs=Infinity; const n=route.pts.length-2;
+  for(let i=Math.max(0,from); i<=Math.min(n,to); i++){
+    const r=projectSeg(route,p,i), a=route.pts[i], b=route.pts[i+1];
+    const br=(Math.atan2(b.x-a.x, b.y-a.y)/RAD+360)%360, diff=Math.abs(((br-hdg)%360+540)%360-180);
+    const sc = r.d + (diff > 100 ? 30 : 0);
+    if(sc < bs - 0.5){ bs=sc; best=r; }
+  }
+  return best || {d:Infinity, along:0, seg:0};
+}
 // Every pass of the route within `thr` metres of a point (a loop can pass the same spot twice).
 function nearestAll(route, p, thr){
   const out=[]; const n=route.pts.length-2;
@@ -144,6 +156,7 @@ function describe(step, isFinal){
 function iconSvg(ins){
   if(!ins) return "";
   if(ins.icon==="rb") return `<svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="12.5" fill="none" stroke="currentColor" stroke-width="4.5"/><text x="24" y="30" text-anchor="middle" font-size="17" font-weight="700" font-family="Chakra Petch,sans-serif" fill="currentColor">${ins.exit||""}</text></svg>`;
+  if(ins.icon==="mv") return ico(ins.mvType==="rev" ? "reverse" : "uturn");
   if(ins.icon==="flag") return `<svg viewBox="0 0 48 48"><path d="M13 6v36" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path d="M15 8h21l-5 7 5 7H15z" fill="currentColor"/></svg>`;
   if(ins.icon==="warn") return `<svg viewBox="0 0 48 48"><path d="M24 6 44 40H4z" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><path d="M24 18v10" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><circle cx="24" cy="34" r="2.5" fill="currentColor"/></svg>`;
   return `<svg viewBox="0 0 48 48" style="transform:rotate(${ins.deg||0}deg)"><path d="M24 4 39 21H29v23H19V21H9z" fill="currentColor"/></svg>`;
@@ -168,8 +181,8 @@ function prepareSteps(route, osrm){
 // =====================================================================
 const ROUTERS = {car:"https://router.project-osrm.org/route/v1/driving", bike:"https://routing.openstreetmap.de/routed-bike/route/v1/driving"};
 const bikeMs = () => (settings.bikeSpeed||22)/3.6;
-async function osrmFetch(coords, signal, profile){
-  const res = await fetchT(`${ROUTERS[profile]||ROUTERS.car}/${coords}?overview=full&geometries=geojson&steps=true`, {signal}, 15000);
+async function osrmFetch(coords, signal, profile, extra){
+  const res = await fetchT(`${ROUTERS[profile]||ROUTERS.car}/${coords}?overview=full&geometries=geojson&steps=true${extra||""}`, {signal}, 15000);
   if(!res.ok) throw new Error("routing "+res.status);
   const j = await res.json();
   if(j.code!=="Ok" || !j.routes || !j.routes.length) throw new Error(j.code||"no route");
@@ -182,6 +195,7 @@ function applyOsrm(route, data){
   route.duration = route.profile==="bike" ? route.total / bikeMs() : data.route.duration;
   route.ok = true;
   if(route.isDest) finalizeDest(route);
+  else if(route.stops && route.stops.length && !route.isDetour) applyManoeuvres(route);
 }
 // fetch with a time limit, so a slow server never leaves the app stuck on "searching"
 function fetchT(url, opts={}, ms=10000){
@@ -283,17 +297,43 @@ function photonPlace(f){
   const kind = p.osm_value && p.osm_value!=="yes" ? p.osm_value.replace(/_/g," ") : "";
   return {lat, lon, label, sub:[...new Set(area)].slice(0,3).join(", ") || kind, kind};
 }
-async function searchPlaces(q, signal){
+async function photonSearch(q, signal){
   const c = biasPoint();
   try{
-    const res = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=8&lang=en&lat=${c.lat}&lon=${c.lon}&bbox=${IE_BBOX}`, {signal});
+    const res = await fetchT(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=8&lang=en&lat=${c.lat}&lon=${c.lon}&bbox=${IE_BBOX}`, {signal}, 8000);
     if(!res.ok) throw new Error("photon "+res.status);
     return ((await res.json()).features||[]).map(photonPlace);
   }catch(e){
     if(e.name==="AbortError") throw e;
-    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=8&countrycodes=ie,gb&viewbox=-10.8,55.5,-5.3,51.3&q=${encodeURIComponent(q)}`, {signal, headers:{"Accept-Language":"en"}});
+    const res = await fetchT(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=8&countrycodes=ie,gb&viewbox=-10.8,55.5,-5.3,51.3&q=${encodeURIComponent(q)}`, {signal, headers:{"Accept-Language":"en"}}, 8000);
     return (await res.json()).map(x => { const parts=x.display_name.split(", "); return {lat:+x.lat, lon:+x.lon, label:parts[0], sub:parts.slice(1,4).join(", ")}; });
   }
+}
+// TomTom knows businesses and Irish Eircodes well; OpenStreetMap (Photon) knows streets and landmarks.
+async function ttSearch(q, signal){
+  if(!ttKey()) return [];
+  const c = biasPoint();
+  const res = await fetchT(`https://api.tomtom.com/search/2/search/${encodeURIComponent(q)}.json?key=${encodeURIComponent(ttKey())}&lat=${c.lat.toFixed(4)}&lon=${c.lon.toFixed(4)}&limit=7&countrySet=IE,GB&typeahead=true&openingHours=nextSevenDays&language=en-GB`, {signal}, 7000);
+  if(!res.ok) throw new Error("tomtom "+res.status);
+  return ((await res.json()).results||[]).map(r => {
+    const a=r.address||{};
+    if(r.type==="POI" && r.poi) return {...ttPoiPlace(r), tt:1};
+    const street=[a.streetNumber, a.streetName].filter(Boolean).join(" ");
+    const label = r.type==="Geography" ? (a.municipalitySubdivision || a.municipality || a.countrySecondarySubdivision || a.freeformAddress)
+      : /^[A-Z]\d{2}\s?[A-Z0-9]{4}$/i.test(q.trim()) && a.extendedPostalCode ? a.extendedPostalCode : (street || a.freeformAddress);
+    return {lat:r.position.lat, lon:r.position.lon, label, sub:a.freeformAddress && a.freeformAddress!==label ? a.freeformAddress : (a.municipality||""), kind:"", tt:1};
+  }).filter(p => p.label);
+}
+async function searchPlaces(q, signal){
+  const [a, b] = await Promise.allSettled([ttSearch(q, signal), photonSearch(q, signal)]);
+  if(signal && signal.aborted) throw new DOMException("aborted", "AbortError");
+  const tt = a.status==="fulfilled" ? a.value : [], ph = b.status==="fulfilled" ? b.value : [];
+  if(!tt.length && !ph.length && b.status==="rejected") throw b.reason;
+  const out=[], key = p => p.label.toLowerCase().replace(/[^a-z0-9]/g,"");
+  const add = p => { if(out.some(o => (key(o)===key(p) && hav(o.lat,o.lon,p.lat,p.lon) < 400) || hav(o.lat,o.lon,p.lat,p.lon) < 15)) return; out.push(p); };
+  tt.filter(p => p.cat).forEach(add);                   // businesses first
+  for(let i=0; i<Math.max(tt.length, ph.length); i++){ if(ph[i]) add(ph[i]); if(tt[i] && !tt[i].cat) add(tt[i]); }
+  return out.slice(0, 10);
 }
 async function reverseLabel(lat, lon){
   try{ const j = await (await fetch(`https://photon.komoot.io/reverse?lat=${lat}&lon=${lon}&lang=en&limit=1`)).json(); const f=(j.features||[])[0]; return f ? photonPlace(f) : null; }
@@ -393,7 +433,10 @@ $("viewer").addEventListener("click", e => { if(e.target.id==="viewer") $("vClos
 // =====================================================================
 // Map
 // =====================================================================
-const map = L.map("map", {zoomControl:false, attributionControl:true}).setView(TC, 14);
+// leaflet-rotate adds map rotation (heading-up driving). Without it the app still works, north-up only.
+const CAN_ROTATE = typeof L.Map.prototype.setBearing === "function";
+const map = L.map("map", {zoomControl:false, attributionControl:true, zoomSnap:0, rotate:CAN_ROTATE, rotateControl:false, touchRotate:CAN_ROTATE, bearing:0}).setView(TC, 14);
+const getBear = () => CAN_ROTATE ? map.getBearing() : 0;
 map.attributionControl.setPrefix(false);
 let baseLayer=null;
 function applyMapStyle(){
@@ -418,7 +461,7 @@ let routeLayer=null, doneLayer=null, stopMarkers=[], meMarker=null, hereMarker=n
 const markLayer = L.layerGroup().addTo(map), poiLayer = L.layerGroup().addTo(map), camLayer = L.layerGroup();
 const sheetH = () => $("sheet").offsetHeight;
 function fitTo(bounds, maxZoom=16){ if(bounds && bounds.isValid()) map.fitBounds(bounds, {paddingTopLeft:[30,50], paddingBottomRight:[30, sheetH()+20], maxZoom}); }
-function placeFabs(){ const b=`calc(${sheetH()}px + 14px)`; $("fabs").style.bottom=b; $("dial").style.bottom=b; $("recenter").style.bottom=b; }
+function placeFabs(){ const b=`calc(${sheetH()}px + 14px)`; $("fabs").style.bottom=b; $("dial").style.bottom=b; $("dfabs").style.bottom=b; }
 new ResizeObserver(placeFabs).observe($("sheet"));
 
 function clearRoute(){
@@ -453,12 +496,18 @@ function drawRoute(route, fit=true){
     stopMarkers.push(L.marker([s[0],s[1]], {icon, keyboard:false}).bindPopup(esc(stopLabel(s[2]))).addTo(markLayer));
   });
   (route.hz||[]).forEach(h => { if(h.type!=="school") hzMarker(h).addTo(markLayer); });
+  (route.mv||[]).forEach(m => mvMarker(route, m).addTo(markLayer));
   if(fit) fitTo(routeLayer.getLayers()[2].getBounds());
 }
+// The arrow is drawn in screen space, so it turns with the heading plus the map's own rotation.
 function meIcon(heading){
   return L.divIcon({className:"me", iconSize:[30,30], iconAnchor:[15,15], html: heading==null
     ? `<svg viewBox="0 0 30 30"><circle cx="15" cy="15" r="13" fill="#38e1ff" opacity=".18"/><circle cx="15" cy="15" r="7" fill="#38e1ff" stroke="#fff" stroke-width="2.5"/></svg>`
-    : `<svg viewBox="0 0 30 30" style="transform:rotate(${heading}deg)"><circle cx="15" cy="15" r="14" fill="#38e1ff" opacity=".16"/><path d="M15 3 24 25 15 20 6 25z" fill="#38e1ff" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg>`});
+    : `<svg viewBox="0 0 30 30" style="transform:rotate(${heading + getBear()}deg)"><circle cx="15" cy="15" r="14" fill="#38e1ff" opacity=".16"/><path d="M15 3 24 25 15 20 6 25z" fill="#38e1ff" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg>`});
+}
+function turnArrow(){
+  const el = meMarker && meMarker.getElement && meMarker.getElement(), svg = el && el.querySelector("svg");
+  if(svg && S && S.hdg!=null) svg.style.transform = `rotate(${S.hdg + getBear()}deg)`;
 }
 
 // ---------- Live traffic layers ----------
@@ -506,8 +555,9 @@ function applyCamLayer(){
 $("camBtn").onclick = () => { settings.camLayer=!settings.camLayer; saveSettings(); applyCamLayer(); renderSwitches(); };
 
 // ---------- Businesses on the map (appear when zoomed in) ----------
-const placesLayer = L.layerGroup(), plCells = new Set(), plSeen = new Set(); let plTimer=null, plBusy=false;
-const PL_CELL = 0.004;
+// Two sources: TomTom (fast, one call per area) and OpenStreetMap (rich, loaded in small tiles).
+const placesLayer = L.layerGroup(), plCells = new Map(), plSeen = new Set(), plPts = []; let plTimer=null, plBusy=false, plRetry=null, plTT=[];
+const PL_CELL = 0.004, PL_ZOOM = 15;
 function poiStyle(tg){
   const a=tg.amenity, sh=tg.shop, tr=tg.tourism;
   if(sh==="supermarket"||sh==="convenience") return ["groc","cart","#33e3a1"];
@@ -518,9 +568,11 @@ function poiStyle(tg){
   if(a==="pub"||a==="bar") return ["pub","pint","#ffb547"];
   if(a==="pharmacy"||a==="hospital"||a==="doctors"||a==="dentist"||a==="veterinary") return ["pharm","cross","#ff4f6d"];
   if(a==="bank"||a==="atm"||a==="post_office") return ["cash","euro","#38e1ff"];
+  if(a==="parking") return ["park","park","#7aa8ff"];
   if(tr==="hotel"||tr==="guest_house") return [null,"bed","#a48cff"];
   if(tr) return [null,"star","#ffb547"];
   if(sh==="doityourself"||sh==="hardware") return ["diy","tool","#8fa7c9"];
+  if(sh==="bicycle") return ["bshop","bike","#33e3a1"];
   if(sh) return [null,"bag","#38e1ff"];
   return [null,"pin","#8a9bb6"];
 }
@@ -532,31 +584,96 @@ function poiPlace(e){
   return {lat, lon, label:tg.name, sub:[street, tg["addr:suburb"]||tg["addr:city"]||tg["addr:town"]].filter(Boolean).join(", ") || kind, kind,
     hours:tg.opening_hours, open:openState(tg.opening_hours), phone:tg.phone||tg["contact:phone"], web:tg.website||tg["contact:website"], ic, cat:catk||"shop"};
 }
+// TomTom POI classes mapped onto the same look as the OpenStreetMap ones
+const TT_KEEP = /^(PETROL_STATION|RESTAURANT|CAFE_PUB|SHOP|SHOPPING_CENTER|MARKET|PHARMACY|HOTEL_MOTEL|ATM|BANK|ELECTRIC_VEHICLE_STATION|HOSPITAL_POLYCLINIC|DOCTOR|DENTIST|VETERINARIAN|POST_OFFICE|CINEMA|LIBRARY|MUSEUM|TOURIST_ATTRACTION|IMPORTANT_TOURIST_ATTRACTION|NIGHTLIFE|CAR_WASH|REPAIR_FACILITY|PARKING_GARAGE|OPEN_PARKING_AREA|RESTAURANT_AREA|THEATER|LEISURE_CENTER|SPORTS_CENTER|FITNESS_CLUB_CENTER)$/;
+function ttTags(poi){
+  const code = ((poi.classifications||[])[0]||{}).code || "";
+  const cats = [...(poi.categories||[]), ...(poi.classifications||[]).flatMap(c => (c.names||[]).map(n => n.name))].join(" ").toLowerCase();
+  if(code==="PETROL_STATION") return {amenity:"fuel"};
+  if(code==="ELECTRIC_VEHICLE_STATION") return {amenity:"charging_station"};
+  if(code==="RESTAURANT"||code==="RESTAURANT_AREA") return {amenity: /caf|coffee/.test(cats) ? "cafe" : "restaurant"};
+  if(code==="CAFE_PUB") return {amenity: /caf|coffee|tea/.test(cats) ? "cafe" : "pub"};
+  if(code==="NIGHTLIFE") return {amenity:"bar"};
+  if(code==="PHARMACY") return {amenity:"pharmacy"};
+  if(/HOSPITAL|DOCTOR|DENTIST|VETERINARIAN/.test(code)) return {amenity:"doctors"};
+  if(code==="ATM") return {amenity:"atm"};
+  if(code==="BANK") return {amenity:"bank"};
+  if(code==="POST_OFFICE") return {amenity:"post_office"};
+  if(code==="HOTEL_MOTEL") return {tourism:"hotel"};
+  if(/TOURIST_ATTRACTION|MUSEUM/.test(code)) return {tourism:"attraction"};
+  if(/PARKING/.test(code)) return {amenity:"parking"};
+  if(/SHOP|MARKET/.test(code)){
+    if(/supermarket|grocer|convenience|food shop|hypermarket/.test(cats)) return {shop:"supermarket"};
+    if(/hardware|diy|do-it-yourself/.test(cats)) return {shop:"hardware"};
+    if(/bicycle|cycle/.test(cats)) return {shop:"bicycle"};
+    return {shop:"yes"};
+  }
+  return {amenity:"other"};
+}
+function ttPoiPlace(r){
+  const poi=r.poi||{}, tg=ttTags(poi), [catk, ic, col]=poiStyle(tg), hrs=ttHours(poi.openingHours), cat0=(poi.categories||[])[0] || ((((poi.classifications||[])[0]||{}).names||[])[0]||{}).name;
+  return {lat:r.position.lat, lon:r.position.lon, label:poi.name, sub:(r.address||{}).freeformAddress||"", kind: catk && tg.amenity!=="doctors" ? t("one_"+catk) : prettyTag(cat0||""),
+    hours:hrs.text, open:hrs.open, openAt:Date.now(), phone:poi.phone, web:poi.url, ic, cat:catk||"shop", col};
+}
+function addPlaceMarker(p, col){
+  if(p.lat==null || !p.label) return;
+  const nm = p.label.toLowerCase().replace(/[^a-z0-9]/g,"");
+  if(plPts.some(q => q.n===nm && Math.abs(q.lat-p.lat) < 0.0008 && Math.abs(q.lon-p.lon) < 0.0012)) return;   // same place from the other source
+  plPts.push({n:nm, lat:p.lat, lon:p.lon});
+  L.marker([p.lat,p.lon], {keyboard:false, icon:L.divIcon({className:"", iconSize:[24,24], iconAnchor:[12,12],
+    html:`<div class="plm" style="--c:${col}">${ico(p.ic)}${p.open===true?'<i class="dot on"></i>':p.open===false?'<i class="dot off"></i>':""}</div>`})})
+    .bindTooltip(esc(p.label), {direction:"top", offset:[0,-10]}).on("click", () => openPlace(p)).addTo(placesLayer);
+}
+async function ttPlaces(c, radius){
+  if(!ttKey() || plTT.some(a => hav(a.lat,a.lon,c.lat,c.lon) < a.r*0.55)) return;
+  plTT.push({lat:c.lat, lon:c.lon, r:radius});
+  try{
+    const res = await fetchT(`https://api.tomtom.com/search/2/nearbySearch/.json?key=${encodeURIComponent(ttKey())}&lat=${c.lat.toFixed(5)}&lon=${c.lon.toFixed(5)}&radius=${Math.round(radius)}&limit=100&openingHours=nextSevenDays&language=en-GB`, {}, 9000);
+    if(!res.ok) throw new Error("tomtom "+res.status);
+    for(const r of (await res.json()).results||[]){
+      const poi=r.poi||{}, code=((poi.classifications||[])[0]||{}).code||"";
+      if(!poi.name || !TT_KEEP.test(code)) continue;
+      const id="tt"+r.id; if(plSeen.has(id)) continue; plSeen.add(id);
+      const p=ttPoiPlace(r); addPlaceMarker(p, p.col);
+    }
+  }catch(e){ plTT = plTT.filter(a => !(a.lat===c.lat && a.lon===c.lon)); throw e; }
+}
+async function osmPlaces(cells){
+  const xs=cells.map(c=>c[0]), ys=cells.map(c=>c[1]);
+  const bb=`${Math.min(...ys)*PL_CELL},${Math.min(...xs)*PL_CELL},${(Math.max(...ys)+1)*PL_CELL},${(Math.max(...xs)+1)*PL_CELL}`;
+  cells.forEach(([x,y]) => plCells.set(x+","+y, "busy"));
+  try{
+    const j = await overpass(`[out:json][timeout:15];(nwr["shop"]["name"](${bb});nwr["amenity"~"^(cafe|restaurant|fast_food|pub|bar|pharmacy|fuel|bank|atm|post_office|charging_station|hospital|doctors|dentist|veterinary|ice_cream|cinema|library|car_wash)$"]["name"](${bb});nwr["tourism"~"^(hotel|guest_house|museum|attraction)$"]["name"](${bb}););out center tags 1500;`, null, 12000);
+    cells.forEach(([x,y]) => plCells.set(x+","+y, "ok"));
+    for(const e of j.elements||[]){
+      const id=e.type+e.id; if(plSeen.has(id)) continue; plSeen.add(id);
+      addPlaceMarker(poiPlace(e), poiStyle(e.tags||{})[2]);
+    }
+  }catch(e){ cells.forEach(([x,y]) => plCells.delete(x+","+y)); throw e; }
+}
 async function placesRefresh(){
-  const show = settings.placesLayer && !S && map.getZoom() >= 16;
+  clearTimeout(plRetry);
+  const show = settings.placesLayer && !S && map.getZoom() >= PL_ZOOM;
   if(!show){ if(map.hasLayer(placesLayer)) placesLayer.remove(); return; }
   if(!map.hasLayer(placesLayer)) placesLayer.addTo(map);
   if(plBusy) return;
-  const b=map.getBounds().pad(.25), need=[];
+  const b=map.getBounds(), c=b.getCenter(), cx=c.lng/PL_CELL, cy=c.lat/PL_CELL, need=[];
   for(let y=Math.floor(b.getSouth()/PL_CELL); y<=Math.floor(b.getNorth()/PL_CELL); y++)
-    for(let x=Math.floor(b.getWest()/PL_CELL); x<=Math.floor(b.getEast()/PL_CELL); x++){ const k=x+","+y; if(!plCells.has(k)) need.push([x,y]); }
-  if(!need.length) return;
-  const xs=need.map(c=>c[0]), ys=need.map(c=>c[1]);
-  const bb=`${Math.min(...ys)*PL_CELL},${Math.min(...xs)*PL_CELL},${(Math.max(...ys)+1)*PL_CELL},${(Math.max(...xs)+1)*PL_CELL}`;
-  plBusy=true;
+    for(let x=Math.floor(b.getWest()/PL_CELL); x<=Math.floor(b.getEast()/PL_CELL); x++){ if(!plCells.has(x+","+y)) need.push([x,y]); }
+  need.sort((p,q) => Math.hypot(p[0]+.5-cx,p[1]+.5-cy) - Math.hypot(q[0]+.5-cx,q[1]+.5-cy));    // middle of the screen first
+  const radius = Math.min(1500, Math.max(300, b.getNorthEast().distanceTo(b.getSouthWest())/2));
+  plBusy=true; let failed=false;
   try{
-    const j = await overpass(`[out:json][timeout:15];(nwr["shop"]["name"](${bb});nwr["amenity"~"^(cafe|restaurant|fast_food|pub|bar|pharmacy|fuel|bank|atm|post_office|charging_station|hospital|doctors|dentist|veterinary|ice_cream|cinema|library|car_wash)$"]["name"](${bb});nwr["tourism"~"^(hotel|guest_house|museum|attraction)$"]["name"](${bb}););out center tags 300;`, null, 12000);
-    need.forEach(([x,y]) => plCells.add(x+","+y));
-    for(const e of j.elements||[]){
-      const id=e.type+e.id; if(plSeen.has(id)) continue; plSeen.add(id);
-      const p=poiPlace(e); if(p.lat==null) continue; const col=poiStyle(e.tags||{})[2];
-      L.marker([p.lat,p.lon], {keyboard:false, icon:L.divIcon({className:"", iconSize:[24,24], iconAnchor:[12,12],
-        html:`<div class="plm" style="--c:${col}">${ico(p.ic)}${p.open===true?'<i class="dot on"></i>':p.open===false?'<i class="dot off"></i>':""}</div>`})})
-        .bindTooltip(esc(p.label), {direction:"top", offset:[0,-10]}).on("click", () => openPlace(p)).addTo(placesLayer);
+    await ttPlaces({lat:c.lat, lon:c.lng}, radius).catch(() => { failed=true; });
+    for(let i=0; i<need.length && i<24; i+=6){
+      if(S || map.getZoom() < PL_ZOOM) break;
+      try{ await osmPlaces(need.slice(i, i+6)); }catch(e){ failed=true; break; }
     }
-  }catch(e){} finally{ plBusy=false; }
+  } finally { plBusy=false; }
+  if(failed) plRetry = setTimeout(placesRefresh, 8000);       // a busy server: try again shortly
+  else if(need.length > 24) plRetry = setTimeout(placesRefresh, 300);
 }
-map.on("moveend", () => { clearTimeout(plTimer); plTimer=setTimeout(placesRefresh, 500); });
+map.on("moveend", () => { clearTimeout(plTimer); plTimer=setTimeout(placesRefresh, 450); });
 
 // ---------- Your location (browse mode) ----------
 let here = null;
@@ -680,32 +797,47 @@ $("places").addEventListener("click", e => {
   else if(e.target.closest("[data-car]")) openCar();
   else if(e.target.closest("[data-parkhere]")) locate(h => { if(h){ saveCar(h); toast(t("parkSaved")); } });
 });
-function itemHtml(p, attrs, icon){
+function itemHtml(p, attrs, icon, n){
   const d = distFromHere(p), v = view(p);
-  return `<button class="item" type="button" ${attrs}><span class="ico">${ico(icon||"pin")}</span>
+  return `<button class="item" type="button" ${attrs}><span class="ico">${ico(icon||"pin")}${n?`<i class="rn">${n}</i>`:""}</span>
     <span class="meta"><b>${esc(v.label)}</b><small>${esc(v.sub||v.kind||"")}</small></span>${d!=null?`<span class="far">${fmtDist(d)}</span>`:""}</button>`;
 }
 
 // Search with suggestions
 let acCtl=null, acTimer=null, lastResults=[];
+const resLayer = L.layerGroup().addTo(map);
+function drawResults(fit){
+  resLayer.clearLayers();
+  if(S || $("results").hidden) return;
+  lastResults.forEach((p,i) => L.marker([p.lat,p.lon], {keyboard:false, zIndexOffset:600, icon:L.divIcon({className:"", iconSize:[26,26], iconAnchor:[13,13],
+    html:`<div class="resm">${i+1}</div>`})}).bindTooltip(esc(p.label), {direction:"top", offset:[0,-12]})
+    .on("click", () => pickResult(i)).addTo(resLayer));
+  if(fit && lastResults.length){
+    const b = L.latLngBounds(lastResults.map(p => [p.lat,p.lon]));
+    if(!map.getBounds().contains(b)) fitTo(b, 15);
+  }
+}
+function hideResults(){ $("results").hidden=true; lastResults=[]; resLayer.clearLayers(); }
+function pickResult(i){ const p=lastResults[i]; if(!p) return; $("addr").value=""; $("clearAddr").hidden=true; hideResults(); openPlace(p); }
 async function runSearch(q){
   if(acCtl) acCtl.abort(); acCtl = new AbortController();
   const box=$("results"); box.hidden=false;
   if(!lastResults.length) box.innerHTML = `<div class="empty">${t("searching")}</div>`;
   try{
     lastResults = await searchPlaces(q, acCtl.signal);
-    box.innerHTML = lastResults.length ? lastResults.map((p,i) => itemHtml(p, `data-i="${i}"`)).join("") : `<div class="empty">${t("noFound")}</div>`;
+    box.innerHTML = lastResults.length ? lastResults.map((p,i) => itemHtml(p, `data-i="${i}"`, p.ic || "pin", i+1)).join("") : `<div class="empty">${t("noFound")}</div>`;
+    drawResults(true);
   }catch(e){ if(e.name!=="AbortError") box.innerHTML = `<div class="empty">${t("searchFail")}</div>`; }
 }
 $("addr").addEventListener("input", () => {
   const q=$("addr").value.trim(); $("clearAddr").hidden=!q; clearTimeout(acTimer);
-  if(q.length<3){ $("results").hidden=true; lastResults=[]; return; }
+  if(q.length<3){ hideResults(); return; }
   acTimer=setTimeout(() => runSearch(q), 350);
 });
 $("addr").addEventListener("focus", () => $("sheet").classList.remove("collapsed"));
 $("searchForm").addEventListener("submit", e => { e.preventDefault(); const q=$("addr").value.trim(); if(q){ clearTimeout(acTimer); $("addr").blur(); runSearch(q); } });
-$("clearAddr").onclick = () => { $("addr").value=""; $("clearAddr").hidden=true; $("results").hidden=true; lastResults=[]; $("addr").focus(); };
-$("results").addEventListener("click", e => { const b=e.target.closest("[data-i]"); if(b){ openPlace(lastResults[+b.dataset.i]); $("addr").value=""; $("clearAddr").hidden=true; $("results").hidden=true; } });
+$("clearAddr").onclick = () => { $("addr").value=""; $("clearAddr").hidden=true; hideResults(); $("addr").focus(); };
+$("results").addEventListener("click", e => { const b=e.target.closest("[data-i]"); if(b) pickResult(+b.dataset.i); });
 
 // Place card
 let travelMode = store.get("ttr-mode", "car");
@@ -907,6 +1039,7 @@ $("modeSeg").addEventListener("click", e => {
 });
 map.on("contextmenu", async e => {
   if(S) return;
+  if(tab==="test" && practice && practice.pts && mvAddPopup(practice, e.latlng)) return;
   const lat=e.latlng.lat, lon=e.latlng.lng;
   openPlace({lat, lon, label:`${lat.toFixed(5)}, ${lon.toFixed(5)}`, sub:""}, null, true);
   const r = await reverseLabel(lat, lon);
@@ -1227,14 +1360,10 @@ function speedProfile(route, els){
   });
   return clean.length ? clean : null;
 }
-function limitAt(route, along){
-  if(!route.lim) return null; let found=null;
-  for(const sg of route.lim){ if(sg.from <= along+5) found=sg; else break; }
-  return found;
-}
-const INTEL_V = "ttr-intel-v1-";
+function limitAt(route, along){ return segAt(route.limits || route.lim, along); }
+const INTEL_V = "ttr-intel-v2-";
 async function loadIntel(route, cacheKey){
-  if(cacheKey){ const c=store.get(INTEL_V+cacheKey, null); if(c){ route.hz=c.hz; route.lim=c.lim; route.intel="ok"; return; } }
+  if(cacheKey){ const c=store.get(INTEL_V+cacheKey, null); if(c){ route.hz=c.hz; route.lim=c.lim; route.intel="ok"; buildLimits(route); return; } }
   route.intel="busy";
   const lats=route.pts.map(p=>p.lat), lons=route.pts.map(p=>p.lon), pad=.0015;
   const bb=`${Math.min(...lats)-pad},${Math.min(...lons)-pad},${Math.max(...lats)+pad},${Math.max(...lons)+pad}`;
@@ -1245,21 +1374,95 @@ async function loadIntel(route, cacheKey){
   try{
     const j = await overpass(q);
     const data = extractIntel(route, j.elements||[]);
-    route.hz=data.hz; route.lim=data.lim; route.intel="ok";
+    route.hz=data.hz; route.lim=data.lim; route.intel="ok"; buildLimits(route);
     if(cacheKey) store.set(INTEL_V+cacheKey, data);
   }catch(e){ route.intel="fail"; }
 }
 function intelCounts(r){
   const c = {rb:(r.steps||[]).filter(s => s.icon==="rb").length};
   (r.hz||[]).forEach(h => c[h.type]=(c[h.type]||0)+1);
-  if(r.lim && r.lim.length>1) c.lim=r.lim.length-1;
+  const lp=r.limits||r.lim; if(lp && lp.length>1) c.lim=lp.length-1;
+  if(r.mv && r.mv.length) c.mv=r.mv.length;
   return c;
 }
 function intelChips(r){
-  const c=intelCounts(r), order=["rb","stop","give_way","signals","crossing","school","bump","camera","lim"];
-  const icon = {rb:"rb", lim:"speed"};
+  const c=intelCounts(r), order=["mv","rb","stop","give_way","signals","crossing","school","bump","camera","lim"];
+  const icon = {rb:"rb", lim:"speed", mv:"uturn"};
   return order.filter(k => c[k]).map(k => `<span class="ichip" style="--c:${HZ_COL[k]||"#38e1ff"}">${ico(icon[k]||k)}${esc(t("cnt_"+k,{n:c[k]}))}</span>`).join("");
 }
+
+// =====================================================================
+// Manoeuvres (turnabout, reverse around a corner) on the practice routes
+// =====================================================================
+// Found where the route turns back on itself at a stop. Your changes are kept per route on this phone.
+const MV_V = "ttr-mv-v1";
+let mvEdits = store.get(MV_V, {});
+const turnAngle = (a,b) => Math.abs(((a-b)%360+540)%360-180);
+function detectManoeuvres(route){
+  const legs = (route.raw && route.raw.route && route.raw.route.legs) || [], out=[];
+  for(let i=0;i<legs.length-1;i++){
+    const a=legs[i].steps||[], b=legs[i+1].steps||[], arr=a[a.length-1], dep=b[0];
+    if(!arr || !dep || !arr.maneuver || !dep.maneuver) continue;
+    const bb=arr.maneuver.bearing_before, ba=dep.maneuver.bearing_after;
+    if(bb==null || ba==null || turnAngle(bb, ba) < 150 || route.stopAlong[i+1]==null) continue;
+    out.push({key:"w"+(i+1), along:route.stopAlong[i+1]});
+  }
+  route.steps.forEach(st => { if(st.mod==="uturn" && !st.mv && !out.some(o => Math.abs(o.along-st.along) < 80)) out.push({key:"u"+(Math.round(st.along/100)), along:st.along}); });
+  // Just round a corner -> reversing around it; mid-street -> turnabout.
+  out.forEach(m => {
+    const prev = route.steps.filter(st => !st.mv && st.along < m.along-2 && st.along > 5 && /left|right/.test(st.mod||"") && st.icon==="arrow").pop();
+    m.guess = prev && m.along - prev.along < 70 ? "rev" : "turn";
+  });
+  return out;
+}
+function applyManoeuvres(route){
+  const e = mvEdits[route.id] || {}, list=[];
+  for(const m of detectManoeuvres(route)){
+    const type = (e.auto||{})[m.key] || m.guess;
+    if(type!=="none") list.push({key:m.key, along:m.along, type, auto:true});
+  }
+  (e.add||[]).forEach((a,i) => {
+    const r=nearest(route, pxy(route.o, a.lat, a.lon), 0, route.pts.length);
+    if(r.d < 60) list.push({key:"a"+i, along:r.along, type:a.type, auto:false});
+  });
+  list.sort((x,y) => x.along-y.along);
+  list.forEach(m => { const p=pointAt(route, m.along); m.lat=p.lat; m.lon=p.lon; });
+  route.mv = list;
+  route.steps = route.steps.filter(st => !st.mv && !(st.mod==="uturn" && list.some(m => Math.abs(m.along-st.along) < 80)));
+  list.forEach(m => route.steps.push({text:t("mv_"+m.type), icon:"mv", mvType:m.type, mv:true, along:m.along, mtype:"mv", mod:"uturn"}));
+  route.steps.sort((x,y) => x.along-y.along);
+}
+function mvMarker(route, m){
+  const mk = L.marker([m.lat, m.lon], {keyboard:false, zIndexOffset:300, icon:L.divIcon({className:"", iconSize:[30,30], iconAnchor:[15,15],
+    html:`<div class="mvm">${ico(m.type==="rev" ? "reverse" : "uturn")}</div>`})}).bindTooltip(esc(t("mv_"+m.type)), {direction:"top", offset:[0,-14]});
+  mk.on("click", () => { if(!S) L.popup(mvPopOpts([0,-8])).setLatLng([m.lat,m.lon]).setContent(mvMenu(route, m)).openOn(map); });
+  return mk;
+}
+const mvPopOpts = off => ({className:"mvpop", offset:off, autoPanPaddingTopLeft:[16,60], autoPanPaddingBottomRight:[80, sheetH()+16]});
+function mvMenu(route, m){
+  const btn = (type, label, ic) => `<button type="button" class="mvb ${m && m.type===type ? "on" : ""}" data-mvr="${route.id}" data-mvk="${m ? m.key : ""}" data-mvt="${type}">${ic ? ico(ic) : ""}${esc(label)}</button>`;
+  return `<div class="mvmenu"><b>${esc(m ? t("mv_title") : t("mv_add"))}</b>${btn("turn", t("mv_turn"), "uturn")}${btn("rev", t("mv_rev"), "reverse")}${m ? btn("none", m.auto ? t("mv_none") : t("mv_remove")) : ""}</div>`;
+}
+function mvAddPopup(route, ll){
+  const r=nearest(route, pxy(route.o, ll.lat, ll.lng), 0, route.pts.length);
+  if(r.d > 40) return false;
+  const p=pointAt(route, r.along);
+  mvAddPopup.at = {lat:p.lat, lon:p.lon};
+  L.popup(mvPopOpts([0,-4])).setLatLng([p.lat,p.lon]).setContent(mvMenu(route, null)).openOn(map);
+  return true;
+}
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-mvt]"); if(!b) return;
+  const route = ROUTES.find(r => r.id===+b.dataset.mvr); if(!route || !route.raw) return;
+  const key=b.dataset.mvk, type=b.dataset.mvt, ed = mvEdits[route.id] = mvEdits[route.id] || {};
+  if(!key){ if(mvAddPopup.at) (ed.add = ed.add || []).push({...mvAddPopup.at, type}); }
+  else if(key[0]==="a"){ const i=+key.slice(1); if(type==="none") ed.add.splice(i,1); else ed.add[i].type=type; }
+  else (ed.auto = ed.auto || {})[key] = type;
+  store.set(MV_V, mvEdits); map.closePopup();
+  applyOsrm(route, route.raw);
+  if(route===practice && tab==="test" && !S) drawRoute(route, false);
+  renderIntel(); toast(t("mv_saved"));
+});
 
 // =====================================================================
 // Test tab: routes, route sheet, drive scores, checklist
@@ -1267,10 +1470,10 @@ function intelChips(r){
 let practice = null, sheetOpen = false;
 const log = store.get("ttr-log", {});
 let reports = store.get("ttr-reports", []);
-const CACHE_V = "ttr-osrm-v1-";
+const CACHE_V = "ttr-osrm-v2-";
 async function loadRoute(route){
   let data = store.get(CACHE_V+route.id, null);
-  if(!data){ data = await osrmFetch(route.stops.map(s => `${s[1]},${s[0]}`).join(";")); store.set(CACHE_V+route.id, data); }
+  if(!data){ data = await osrmFetch(route.stops.map(s => `${s[1]},${s[0]}`).join(";"), null, "car", "&continue_straight=false"); store.set(CACHE_V+route.id, data); }
   applyOsrm(route, data);
 }
 function fallbackRoute(route){
@@ -1300,11 +1503,11 @@ function renderIntel(){
   if(sheetOpen) renderSheet(r);
 }
 function renderSheet(r){
-  const rows = (r.steps||[]).map(s => ({along:s.along, html:`<span class="rsi ${s.icon}">${s.icon==="rb" ? `<b>${s.exit||""}</b>` : s.icon==="flag" ? ico("flag") : `<span style="display:inline-flex;transform:rotate(${s.deg||0}deg)">${ico("arrow")}</span>`}</span><div><b>${esc(s.text)}</b><small>${t("atKm",{d:fmtDist(s.along)})}</small></div>`}));
+  const rows = (r.steps||[]).map(s => ({along:s.along, html:`<span class="rsi ${s.icon}">${s.icon==="rb" ? `<b>${s.exit||""}</b>` : s.icon==="flag" ? ico("flag") : s.icon==="mv" ? ico(s.mvType==="rev" ? "reverse" : "uturn") : `<span style="display:inline-flex;transform:rotate(${s.deg||0}deg)">${ico("arrow")}</span>`}</span><div><b>${esc(s.text)}</b><small>${t("atKm",{d:fmtDist(s.along)})}</small></div>`}));
   (r.hz||[]).forEach(h => rows.push({along:h.along, html:`<span class="rsi hz" style="--c:${HZ_COL[h.type]}">${ico(h.type)}</span><div><b class="dim">${esc(t("hz_"+h.type))}</b><small>${t("atKm",{d:fmtDist(h.along)})}</small></div>`}));
-  (r.lim||[]).forEach((sg,i) => { if(i>0) rows.push({along:sg.from, html:`<span class="rsi lim"><b>${sg.v}</b></span><div><b class="dim">${esc(t("limitTo",{n:sg.v}))}</b><small>${t("atKm",{d:fmtDist(sg.from)})}</small></div>`}); });
+  (r.limits||r.lim||[]).forEach((sg,i) => { if(i>0) rows.push({along:sg.from, html:`<span class="rsi lim"><b>${sg.v}</b></span><div><b class="dim">${esc(t("limitTo",{n:sg.v}))}</b><small>${t("atKm",{d:fmtDist(sg.from)})}</small></div>`}); });
   rows.sort((a,b) => a.along-b.along);
-  $("routeSheet").innerHTML = rows.map(x => `<div class="rs">${x.html}</div>`).join("");
+  $("routeSheet").innerHTML = `<p class="note mvtip">${esc(t("mv_tip"))}</p>` + rows.map(x => `<div class="rs">${x.html}</div>`).join("");
 }
 $("sheetToggle").onclick = () => { sheetOpen=!sheetOpen; renderIntel(); };
 $("routeList").addEventListener("click", e => {
@@ -1379,31 +1582,62 @@ $("savedList").addEventListener("click", e => {
 $("bikeSpeed").addEventListener("click", e => { const b=e.target.closest("[data-speed]"); if(!b) return; settings.bikeSpeed=+b.dataset.speed; saveSettings(); renderBikeSpeed();
   if(dest && travelMode==="bike" && dest.pts){ dest.duration = dest.total/bikeMs(); setEta("etaDrive", {s:dest.duration, m:dest.total, bike:true}); } });
 function renderBikeSpeed(){ document.querySelectorAll("#bikeSpeed [data-speed]").forEach(b => b.setAttribute("aria-pressed", String(+b.dataset.speed===settings.bikeSpeed))); }
-$("langSeg").addEventListener("click", e => { const b=e.target.closest("[data-lang]"); if(b && b.dataset.lang!==lang){ lang=settings.lang=b.dataset.lang; saveSettings(); applyLang(); } });
+function setLang(l){ if(l===lang || !TX[l]) return; lang=settings.lang=l; saveSettings(); applyLang(); }
+$("langSeg").addEventListener("click", e => { const b=e.target.closest("[data-lang]"); if(b) setLang(b.dataset.lang); });
 
 // ---------- Voice and sound ----------
-let voiceOn = store.get("ttr-voice", true), voice=null, voiceList=[];
+// Sound: "all" (directions + alerts), "alerts" (cameras, limits, hazards only) or "off".
+let sound = store.get("ttr-sound", store.get("ttr-voice", true) ? "all" : "off");
+let voice=null, voiceAll=[], voicePoll=null;
+const vLang = v => String(v.lang||"").replace("_","-").toLowerCase();
 function voiceScore(v){
-  let s=0; const n=v.name;
+  let s=0; const n=v.name, vl=vLang(v);
   if(/natural|neural|premium|enhanced|wavenet|online/i.test(n)) s+=10;
   if(/google/i.test(n)) s+=4;
   if(!v.localService) s+=2;
-  if(lang==="en"){ if(/en[-_]IE/i.test(v.lang)) s+=4; else if(/en[-_]GB/i.test(v.lang)) s+=3; else if(/en[-_](AU|NZ)/i.test(v.lang)) s+=1; }
+  if(/^en-ie/.test(vl)) s+=4; else if(/^en-gb/.test(vl)) s+=3; else if(/^en-(au|nz)/.test(vl)) s+=1;
+  if(/^pl/.test(vl)) s+=3;
   if(/compact|espeak|robot|novelty|whisper|zarvox|bells|trinoids|bad news|good news|bubbles|cellos|jester|organ|superstar|bahh|boing|albert|fred|junior|ralph|kathy/i.test(n)) s-=20;
   return s;
 }
+const voiceName = v => `${v.name.replace(/^(Microsoft|Google|Apple)\s+/,"").replace(/\s*\(.*?\)\s*/g," ").trim()} · ${v.lang}`;
+// Every voice on the phone is listed (grouped by language), not just the app's language.
 function pickVoice(){
   if(!("speechSynthesis" in window)) return;
-  const want = new RegExp("^"+lang, "i");
-  voiceList = speechSynthesis.getVoices().filter(v => want.test(v.lang)).sort((a,b) => voiceScore(b)-voiceScore(a));
+  voiceAll = speechSynthesis.getVoices() || [];
+  const mine = voiceAll.filter(v => vLang(v).startsWith(lang)).sort((a,b) => voiceScore(b)-voiceScore(a));
+  const other = lang==="pl" ? "en" : "pl", second = voiceAll.filter(v => vLang(v).startsWith(other)).sort((a,b) => voiceScore(b)-voiceScore(a));
+  const rest = voiceAll.filter(v => !mine.includes(v) && !second.includes(v)).sort((a,b) => vLang(a).localeCompare(vLang(b)) || voiceScore(b)-voiceScore(a));
   const saved = store.get("ttr-voiceURI-"+lang, lang==="en" ? store.get("ttr-voiceURI", null) : null);
-  voice = voiceList.find(v => v.voiceURI===saved) || voiceList[0] || null;
-  $("voiceSel").innerHTML = voiceList.length ? voiceList.map(v => `<option value="${esc(v.voiceURI)}">${esc(v.name.replace(/^(Microsoft|Google|Apple)\s+/,""))} · ${esc(v.lang)}</option>`).join("") : `<option>${t("phoneDefault")}</option>`;
-  if(voice) $("voiceSel").value = voice.voiceURI;
+  voice = (saved && saved!=="auto" && voiceAll.find(v => v.voiceURI===saved && vLang(v).startsWith(lang))) || mine[0] || null;
+  const opt = v => `<option value="${esc(v.voiceURI)}">${esc(voiceName(v))}</option>`;
+  const grp = (label, list) => list.length ? `<optgroup label="${esc(label)}">${list.map(opt).join("")}</optgroup>` : "";
+  $("voiceSel").innerHTML = `<option value="auto">${esc(t("voiceAuto"))}${mine[0] ? " · "+esc(voiceName(mine[0])) : ""}</option>`
+    + grp(t("lang_"+lang), mine) + grp(t("lang_"+other), second) + grp(t("otherLangs"), rest);
+  $("voiceSel").value = saved && saved!=="auto" && voice && voice.voiceURI===saved ? saved : "auto";
+  $("voiceHint").hidden = !!mine.length || !voiceAll.length;
+  $("voiceHint").textContent = t("voiceMissing");
+  if(voiceAll.length && voicePoll){ clearInterval(voicePoll); voicePoll=null; }
 }
-if("speechSynthesis" in window) speechSynthesis.onvoiceschanged = pickVoice;
-$("voiceSel").onchange = e => { voice = voiceList.find(v => v.voiceURI===e.target.value) || voice; store.set("ttr-voiceURI-"+lang, voice && voice.voiceURI); };
-$("testVoice").onclick = () => { const was=voiceOn; voiceOn=true; unlockAudio(); chime(); say(t("v_test"), true); voiceOn=was; };
+if("speechSynthesis" in window){
+  speechSynthesis.onvoiceschanged = pickVoice;
+  // Android Chrome often reports no voices at first and never fires the event: keep asking for a while.
+  let tries=0; voicePoll = setInterval(() => { tries++; pickVoice(); if(tries>20 && voicePoll){ clearInterval(voicePoll); voicePoll=null; } }, 500);
+  document.addEventListener("visibilitychange", () => { if(document.visibilityState==="visible") pickVoice(); });
+  $("voiceSel").addEventListener("pointerdown", () => { if(!voiceAll.length) pickVoice(); });
+}
+$("voiceSel").onchange = e => {
+  const val=e.target.value;
+  if(val==="auto"){ store.set("ttr-voiceURI-"+lang, "auto"); pickVoice(); return; }
+  const v = voiceAll.find(x => x.voiceURI===val); if(!v) return;
+  const vl = vLang(v);
+  // Picking a Polish voice switches directions to Polish (and the other way round), so the voice reads its own language.
+  if(vl.startsWith("pl") && lang!=="pl" || vl.startsWith("en") && lang!=="en"){
+    const nl = vl.slice(0,2); store.set("ttr-voiceURI-"+nl, val); setLang(nl); toast(t("voiceLangSwitched")); return;
+  }
+  store.set("ttr-voiceURI-"+lang, val); voice = v;
+};
+$("testVoice").onclick = () => { const was=sound; sound="all"; unlockAudio(); chime(); say(t("v_test"), true); sound=was; };
 const ORD_WORDS = ["","first","second","third","fourth","fifth","sixth","seventh","eighth"];
 const ABBR = [[/\bInd Est\b/g,"Industrial Estate"],[/\bRd\b/g,"Road"],[/\bAve\b/g,"Avenue"],[/\bCres\b/g,"Crescent"],[/\bCt\b/g,"Court"],
   [/\bDr\b/g,"Drive"],[/\bPk\b/g,"Park"],[/\bGrv\b/g,"Grove"],[/\bSq\b/g,"Square"],[/\bLwr\b/g,"Lower"],[/\bUpr\b/g,"Upper"],
@@ -1413,60 +1647,152 @@ function spoken(text){
   ABBR.forEach(([re,w]) => s = s.replace(re, w));
   return s.replace(/\b([RNM])(\d)(\d)(\d)\b/g, "$1 $2 $3 $4").replace(/\b([RNM])(\d{1,2})\b/g, "$1 $2");
 }
-function say(text, urgent){
-  if(!voiceOn || !("speechSynthesis" in window)) return;
+function say(text, urgent, kind){
+  if(!("speechSynthesis" in window) || sound==="off" || (sound==="alerts" && kind!=="alert")) return;
   if(urgent) speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(spoken(text));
-  if(voice){ u.voice=voice; u.lang=voice.lang; } else u.lang = lang==="pl" ? "pl-PL" : "en-IE";
-  u.rate = 0.96; speechSynthesis.speak(u);
+  u.lang = lang==="pl" ? "pl-PL" : "en-IE";
+  if(voice){ try{ u.voice=voice; u.lang=voice.lang; }catch(e){} }
+  u.rate = 0.96; u.volume = 1;
+  if(speechSynthesis.paused) speechSynthesis.resume();
+  speechSynthesis.speak(u);
 }
 let actx=null;
 function unlockAudio(){ try{ actx = actx || new (window.AudioContext||window.webkitAudioContext)(); if(actx.state==="suspended") actx.resume(); }catch(e){} }
-function chime(){
-  if(!voiceOn || !actx) return;
+function tones(list, vol){
+  if(sound==="off" || !actx) return;
   try{
     const t0=actx.currentTime;
-    [[988,0],[1319,.13]].forEach(([f,dt]) => {
+    list.forEach(([f,dt,len]) => {
       const o=actx.createOscillator(), g=actx.createGain(); o.type="sine"; o.frequency.value=f;
-      g.gain.setValueAtTime(.0001,t0+dt); g.gain.exponentialRampToValueAtTime(.22,t0+dt+.02); g.gain.exponentialRampToValueAtTime(.0001,t0+dt+.28);
-      o.connect(g); g.connect(actx.destination); o.start(t0+dt); o.stop(t0+dt+.3);
+      g.gain.setValueAtTime(.0001,t0+dt); g.gain.exponentialRampToValueAtTime(vol,t0+dt+.02); g.gain.exponentialRampToValueAtTime(.0001,t0+dt+len);
+      o.connect(g); g.connect(actx.destination); o.start(t0+dt); o.stop(t0+dt+len+.02);
     });
   }catch(e){}
 }
-function setVoiceBtn(){ $("muteBtn").innerHTML = ico(voiceOn ? "vol" : "mute"); $("muteBtn").classList.toggle("off", !voiceOn); }
-$("muteBtn").onclick = () => { voiceOn=!voiceOn; store.set("ttr-voice", voiceOn); setVoiceBtn(); if(!voiceOn) speechSynthesis.cancel(); };
+const chime = () => tones([[988,0,.28],[1319,.13,.28]], .22);          // alerts: cameras, incidents
+const turnTone = () => { if(settings.turnChime && sound==="all") tones([[660,0,.18],[880,.09,.22]], .16); };   // just before a turn
+const SOUND_IC = {all:"vol", alerts:"bell", off:"mute"};
+function setVoiceBtn(){ $("muteBtn").innerHTML = ico(SOUND_IC[sound]); $("muteBtn").classList.toggle("off", sound==="off"); $("muteBtn").classList.toggle("half", sound==="alerts"); }
+$("muteBtn").onclick = () => {
+  sound = sound==="all" ? "alerts" : sound==="alerts" ? "off" : "all"; store.set("ttr-sound", sound); setVoiceBtn();
+  if(sound!=="all" && "speechSynthesis" in window) speechSynthesis.cancel();
+  toast(t("sound_"+sound));
+};
 
 // =====================================================================
 // Speed limits
 // =====================================================================
-const SL = {limit:null, lastAt:0, lastPos:null, busy:false};
-function setLimit(lim, announce){
-  if(!lim || (SL.limit && SL.limit.v===lim.v && SL.limit.u===lim.u)) return;
+const SL = {limit:null, lastAt:0, lastPos:null, busy:false, setAt:null, src:null};
+function setLimit(lim, announce, pos){
+  if(pos) SL.setAt = {lat:pos.lat, lon:pos.lon};
+  if(!lim) return;
+  if(SL.limit && SL.limit.v===lim.v && SL.limit.u===lim.u){ showLimit(); return; }
   SL.limit = {v:lim.v, u:lim.u, kmh:lim.kmh}; showLimit();
-  if(announce && settings.limitVoice && settings.limits) say(t("v_limit", {n:lim.v, mph:lim.u==="mph"}));
+  if(announce && settings.limitVoice && settings.limits) say(t("v_limit", {n:lim.v, mph:lim.u==="mph"}), false, "alert");
 }
+// The last known limit stays on screen (roads rarely change limit without a sign); it fades if not confirmed for 1.5 km.
 function showLimit(){
   const el=$("limitSign"); el.hidden = !settings.limits || !!(S && S.route.profile==="bike");
-  el.classList.toggle("unknown", !SL.limit);
+  const here0 = S && S.lastFix, stale = !!(SL.limit && SL.setAt && here0 && hav(SL.setAt.lat,SL.setAt.lon,here0.lat,here0.lon) > 1500);
+  el.classList.toggle("unknown", !SL.limit); el.classList.toggle("stale", stale);
   el.innerHTML = SL.limit ? `${SL.limit.v}${SL.limit.u==="mph"?"<small>mph</small>":""}` : "–";
 }
+function parseTTLimit(v){ const m=String(v||"").match(/([\d.]+)\s*(KPH|MPH)/i); if(!m) return null; const n=Math.round(+m[1]), mph=/mph/i.test(m[2]); return n ? {v:n, u:mph?"mph":"km/h", kmh: mph ? n*1.609 : n} : null; }
+// TomTom: the limit of the road at a point (direction-aware). One request, so it's only used where the route has no data.
+async function ttLimitAt(f, hdg){
+  if(!ttKey()) return null;
+  const res = await fetchT(`https://api.tomtom.com/search/2/reverseGeocode/${f.lat.toFixed(6)},${f.lon.toFixed(6)}.json?key=${encodeURIComponent(ttKey())}&returnSpeedLimit=true&radius=40${hdg!=null?`&heading=${Math.round(hdg)}`:""}&language=en-GB`, {}, 6000);
+  if(!res.ok) throw new Error("tomtom "+res.status);
+  const ad = ((await res.json()).addresses||[])[0];
+  return ad && ad.address ? parseTTLimit(ad.address.speedLimit) : null;
+}
+// OpenStreetMap: the nearest road with a maxspeed tag, preferring roads that run in our direction.
+async function osmLimitAt(f, hdg){
+  const j = await overpass(`[out:json][timeout:8];way(around:25,${f.lat},${f.lon})["highway"]["maxspeed"];out tags geom 8;`, null, 9000);
+  const o = mkO(f.lat, f.lon), p0={x:0,y:0}; let best=null;
+  for(const w of j.elements||[]){
+    const g=(w.geometry||[]).map(q => pxy(o,q.lat,q.lon));
+    for(let i=0;i<g.length-1;i++){
+      let d=segDist(p0, g[i], g[i+1]).d;
+      if(hdg!=null){ const br=(Math.atan2(g[i+1].x-g[i].x, g[i+1].y-g[i].y)/RAD+360)%180, h=hdg%180, diff=Math.min(Math.abs(br-h), 180-Math.abs(br-h)); if(diff>35) d+=20; }
+      if(!best || d<best.d) best={d, tags:w.tags};
+    }
+  }
+  return best && best.d < 40 ? parseLimit(best.tags.maxspeed) : null;
+}
+// Live lookup for places the route data doesn't cover: TomTom first, OpenStreetMap as a back-up.
 async function checkLimit(f, hdg){
-  if(!settings.limits || SL.busy || Date.now()-SL.lastAt < 10000) return;
-  if(SL.lastPos && hav(SL.lastPos.lat,SL.lastPos.lon,f.lat,f.lon) < 120) return;
+  if(!settings.limits || SL.busy) return;
+  const since = Date.now()-SL.lastAt, moved = SL.lastPos ? hav(SL.lastPos.lat,SL.lastPos.lon,f.lat,f.lon) : 1e9;
+  if(since < 6000 || (moved < 90 && since < 45000)) return;
   SL.busy=true; SL.lastAt=Date.now(); SL.lastPos={lat:f.lat, lon:f.lon};
   try{
-    const j = await overpass(`[out:json][timeout:8];way(around:25,${f.lat},${f.lon})["highway"]["maxspeed"];out tags geom 8;`);
-    const o = mkO(f.lat, f.lon), p0={x:0,y:0}; let best=null;
-    for(const w of j.elements||[]){
-      const g=(w.geometry||[]).map(q => pxy(o,q.lat,q.lon));
-      for(let i=0;i<g.length-1;i++){
-        let d=segDist(p0, g[i], g[i+1]).d;
-        if(hdg!=null){ const br=(Math.atan2(g[i+1].x-g[i].x, g[i+1].y-g[i].y)/RAD+360)%180, h=hdg%180, diff=Math.min(Math.abs(br-h), 180-Math.abs(br-h)); if(diff>35) d+=20; }
-        if(!best || d<best.d) best={d, tags:w.tags};
-      }
-    }
-    if(S && best && best.d < 40) setLimit(parseLimit(best.tags.maxspeed), true);
-  }catch(e){} finally{ SL.busy=false; }
+    let lim = await ttLimitAt(f, hdg).catch(() => null);
+    if(!lim) lim = await osmLimitAt(f, hdg).catch(() => null);
+    if(S && lim) setLimit(lim, true, f);
+  } finally { SL.busy=false; }
+}
+// TomTom speed limits for a whole route, rebuilt along our own line so they line up exactly.
+async function ttRouteLimits(route){
+  if(!ttKey() || !route.pts) return null;
+  const pts=route.pts, step=Math.max(1, Math.ceil(pts.length/1000)), sp=[];
+  for(let i=0;i<pts.length;i+=step) sp.push({latitude:+pts[i].lat.toFixed(6), longitude:+pts[i].lon.toFixed(6)});
+  const last=pts[pts.length-1]; if((pts.length-1) % step) sp.push({latitude:+last.lat.toFixed(6), longitude:+last.lon.toFixed(6)});
+  const a=pts[0], k=encodeURIComponent(ttKey()), q=`json?key=${k}&travelMode=car&sectionType=speedLimit&routeRepresentation=polyline&traffic=false`;
+  let j=null;
+  try{
+    const res = await fetchT(`https://api.tomtom.com/routing/1/calculateRoute/${a.lat.toFixed(6)},${a.lon.toFixed(6)}:${last.lat.toFixed(6)},${last.lon.toFixed(6)}/${q}`,
+      {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({supportingPoints:sp})}, 15000);
+    if(res.ok) j = await res.json();
+  }catch(e){}
+  if(!j && route.stops && route.stops.length > 2){                // plan B: route through the stops
+    const res = await fetchT(`https://api.tomtom.com/routing/1/calculateRoute/${route.stops.map(s => s[0].toFixed(6)+","+s[1].toFixed(6)).join(":")}/${q}`, {}, 15000);
+    if(res.ok) j = await res.json();
+  }
+  const rt = j && j.routes && j.routes[0]; if(!rt) return null;
+  const tp = (rt.legs||[]).flatMap(l => l.points||[]);
+  const secs = (rt.sections||[]).filter(x => /speed_?limit/i.test(x.sectionType||"") && x.maxSpeedLimitInKmh).sort((x,y) => x.startPointIndex-y.startPointIndex);
+  if(!tp.length || !secs.length) return null;
+  const samples=[]; let seg=0, si=0;
+  for(let i=0;i<tp.length;i++){
+    while(si<secs.length && secs[si].endPointIndex < i) si++;
+    const sc = secs[si] && secs[si].startPointIndex <= i ? secs[si] : null;
+    const q2 = pxy(route.o, tp[i].latitude, tp[i].longitude);
+    let m = nearest(route, q2, seg-2, seg+80);
+    if(m.d > 25){ const g=nearest(route, q2, seg, route.pts.length); if(g.d < m.d) m=g; }
+    if(m.d > 25) continue;
+    seg = m.seg;
+    samples.push({along:m.along, v: sc ? Math.round(sc.maxSpeedLimitInKmh) : null});
+  }
+  const segs=[]; let cur=null;
+  for(const smp of samples){
+    if(smp.v==null){ cur=null; continue; }
+    if(cur && cur.v===smp.v && smp.along - cur.to < 120) cur.to = smp.along;
+    else { cur={from:smp.along, to:smp.along, v:smp.v, u:"km/h", kmh:smp.v}; segs.push(cur); }
+  }
+  return segs.length ? segs : null;
+}
+const TTL_V = "ttr-ttl-v1-";
+async function loadRouteLimits(route, cacheKey){
+  if(cacheKey){ const c=store.get(TTL_V+cacheKey, null); if(c && Date.now()-c.at < 14*864e5){ route.ttl=c.segs; buildLimits(route); return; } }
+  try{
+    const segs = await ttRouteLimits(route);
+    if(segs){ route.ttl=segs; buildLimits(route); if(cacheKey) store.set(TTL_V+cacheKey, {at:Date.now(), segs}); }
+  }catch(e){}
+}
+// One limit profile per route: TomTom where it has data, OpenStreetMap to fill the gaps.
+function segAt(list, along){ if(!list) return null; for(const sg of list){ if(sg.from-5 <= along && along <= sg.to+40) return sg; if(sg.from > along+5) break; } return null; }
+function buildLimits(route){
+  if(!route.ttl && !route.lim){ route.limits=null; return; }
+  const out=[]; let cur=null;
+  for(let s=0; s<=route.total; s+=20){
+    const sg = segAt(route.ttl, s) || segAt(route.lim, s);
+    if(!sg){ cur=null; continue; }
+    if(cur && cur.v===sg.v && cur.u===sg.u) cur.to=s;
+    else { cur={from:s, to:s, v:sg.v, u:sg.u, kmh:sg.kmh}; out.push(cur); }
+  }
+  route.limits = out.length ? out : null;
 }
 
 // =====================================================================
@@ -1479,25 +1805,27 @@ document.addEventListener("visibilitychange", () => { if(S && document.visibilit
 function startSession(r, mode){
   if(!r || (!r.pts && !r.isDest)) return;
   unlockAudio();
-  if(r.isDest){ r.pts=null; r.hz=null; r.lim=null; clearRoute(); destMarker(r.dest); } else drawRoute(r, false);
+  if(r.isDest){ r.pts=null; r.hz=null; r.lim=null; r.ttl=null; r.limits=null; clearRoute(); destMarker(r.dest); } else drawRoute(r, false);
   poiLayer.clearLayers(); camLayer.remove(); placesLayer.remove(); carLayer.clearLayers();
   if(r.isDest){ r.profile = travelMode==="bike" ? "bike" : "car"; r.color = r.profile==="bike" ? "#33e3a1" : "#38e1ff"; }
   document.body.classList.toggle("riding", r.profile==="bike");
   if(hereMarker){ hereMarker.remove(); hereMarker=null; }
   S = {route:r, mode, seg:0, progress:0, off:0, offSaid:false, said:{}, hzSaid:{}, limSaid:{}, startedAt:Date.now(), finished:false, lastFix:null, routing:false, lastRoute:0, overN:0, lastWarn:0,
-       rec:{track:[], dist:0, maxV:0, speeding:[], brakes:[], stopMin:{}, last:null, overRun:0, lastBrake:0}};
-  SL.limit=null; SL.lastPos=null; SL.lastAt=0;
+       hdg:null, detour:null, rec:{track:[], dist:0, maxV:0, speeding:[], brakes:[], stopMin:{}, last:null, overRun:0, lastBrake:0}};
+  SL.limit=null; SL.lastPos=null; SL.lastAt=0; SL.setAt=null;
+  hideResults(); clearDetour();
   document.body.classList.add("driving");
   $("sheet").classList.remove("collapsed");
   $("driveView").hidden=false; $("hud").hidden=false; $("dial").hidden=false; $("recenter").hidden=true; $("fabs").hidden=true; $("alert").hidden=true;
   setVoiceBtn(); showLimit(); setDial(null); follow=true; keepAwake();
+  $("dfabs").hidden=false; $("recenter").hidden=true; cam.zoomAt=0; cam.tz=null; cam.car=null; cam.anim=null; cam.lastAt=0; renderCompass();
   try{ const de=document.documentElement; if(!document.fullscreenElement && de.requestFullscreen) de.requestFullscreen({navigationUI:"hide"}).catch(()=>{}); }catch(e){}
   map.setZoom(17);
   if(r.isDest){ showSign({icon:"arrow", deg:0}, "", false); $("signInstr").textContent = t("findingYou"); }
   else {
     say((settings.examiner ? t("ex_intro") : t("v_intro",{id:r.id, n:routeName(r), s:r.stops.length-2})) + (mode==="sim" ? t("v_introSim") : ""), true);
     if(settings.examiner && mode==="gps") S.ex = planPullIns(r);
-    if(r.lim){ const L0=limitAt(r,0); if(L0) setLimit(L0, true); }
+    { const L0=limitAt(r,0); if(L0) setLimit(L0, true, pointAt(r,0)); }
     if(ttKey()) liveTraffic(r, null, true);
   }
   updateStats();
@@ -1524,6 +1852,7 @@ function endSession(){
   if(wakeLock){ wakeLock.release().catch(()=>{}); wakeLock=null; }
   if("speechSynthesis" in window) speechSynthesis.cancel();
   if(meMarker){ meMarker.remove(); meMarker=null; }
+  clearDetour(); $("dfabs").hidden=true; cancelAnimationFrame(cam.loop); cam.loop=0; cam.anim=null; cam.car=null; turnMap(0, true);
   try{ if(document.fullscreenElement) document.exitFullscreen().catch(()=>{}); }catch(e){}
   const wasDest = S.route.isDest, rep = S.report || (S.mode==="gps" && S.progress/(S.route.total||1) > .6 ? buildReport() : null);
   const parkAt = S.mode==="gps" && S.lastFix && S.route.profile!=="bike" ? {...S.lastFix} : null;
@@ -1546,12 +1875,12 @@ function endSession(){
 }
 $("endBtn").onclick = endSession;
 map.on("dragstart", () => { if(S){ follow=false; $("recenter").hidden=false; } });
-$("recenter").onclick = () => { follow=true; $("recenter").hidden=true; if(S && S.lastFix) map.setView([S.lastFix.lat,S.lastFix.lon], Math.max(map.getZoom(),16)); };
+$("recenter").onclick = () => { follow=true; $("recenter").hidden=true; cam.zoomAt=0; if(S && S.lastFix) camUpdate(S.lastFix, S.hdg, S.kmh, S.nextDist, true); };
 
 function showSign(ins, distText, off, next){
   $("signIcon").innerHTML = iconSvg(ins); $("signDist").textContent = distText; $("signInstr").textContent = ins && ins.text ? ins.text : "";
   $("signThen").hidden = !next; if(next) $("signThen").textContent = t("then", {s:lc(next.text)});
-  $("sign").classList.toggle("off", !!off);
+  $("sign").classList.toggle("off", !!off); $("sign").classList.remove("detour");
 }
 function setDial(kmh, over, bike){
   const max=bike ? 50 : 140, C=235.6, v = kmh==null ? 0 : Math.min(kmh, max);
@@ -1566,18 +1895,19 @@ async function routeFromHere(f, isReroute){
   S.routing = true; S.lastRoute = Date.now();
   if(isReroute) say(t("v_rerouting"), true);
   try{
-    const data = await osrmFetch(`${f.lon},${f.lat};${r.dest.lon},${r.dest.lat}`, null, r.profile);
+    const data = await osrmFetch(`${f.lon},${f.lat};${r.dest.lon},${r.dest.lat}`, null, r.profile, S.hdg!=null && isReroute ? `&bearings=${Math.round(S.hdg)},60;` : "");
     if(!S || S.route !== r) return;
-    applyOsrm(r, data); r.hz=null; r.lim=null;
+    applyOsrm(r, data); r.hz=null; r.lim=null; r.ttl=null; r.limits=null;
     drawRoute(r, false);
     S.seg=0; S.progress=0; S.said={}; S.hzSaid={}; S.limSaid={}; S.off=0; S.offSaid=false;
     if(!isReroute){
-      map.setView([f.lat, f.lon], 17); say(t("v_heading", {n:destName(r), t:spokenDur(r.duration)}), true);
+      say(t("v_heading", {n:destName(r), t:spokenDur(r.duration)}), true);
       weatherAt(r.dest).then(w => { if(S && S.route===r && w && w.warn){ say(t("wxWarn", {w:lc(t(w.key))})); toast(t("wxWarn", {w:lc(t(w.key))}), 5000); } }).catch(() => {});
     }
     setTimeout(() => { if(S && S.route===r && S.lastFix) onFix({...S.lastFix, speed:null}); }, 0);
     if(r.profile!=="bike"){
       loadIntel(r).then(() => { if(S && S.route===r){ drawRoute(r, false); } });
+      loadRouteLimits(r).then(() => { if(S && S.route===r && S.lastFix) onFix({...S.lastFix, speed:null}); });
       if(ttKey()){ S.inc=[]; liveTraffic(r, f, true); }
     }
   }catch(e){ toast(t("routeFail"), 4000); }
@@ -1597,7 +1927,7 @@ async function liveTraffic(r, f, first){
     if(inc) S.inc = inc;
     if(tr){
       const arrive = Date.now() + tr.secs*1000;
-      if(!first && S.tt && arrive - S.tt.arrive > 4*60000) say(t("v_delay", {t:hhmm(arrive)}));
+      if(!first && S.tt && arrive - S.tt.arrive > 4*60000) say(t("v_delay", {t:hhmm(arrive)}), false, "alert");
       S.tt = {secs:tr.secs, prog:S.progress, at:Date.now(), arrive};
     }
   }finally{ if(S) S.ttBusy=false; }
@@ -1643,12 +1973,13 @@ function updateAlerts(r){
       S.hzSaid[key]=1;
       if(h.type==="camera" || inc) chime();
       const lim = h.lim || (limitAt(r,h.along)||{}).v;
-      say(inc ? t("vi_"+h.kind) : t("vh_"+h.type, {lim}));
+      say(inc ? t("vi_"+h.kind) : t("vh_"+h.type, {lim}), false, "alert");
     }
   });
-  if(r.lim && settings.limitVoice && settings.limits){
-    const cur=limitAt(r,pr), nx=r.lim.find(sg => sg.from>pr+5 && sg.from-pr<150);
-    if(nx && cur && nx.v!==cur.v && !S.limSaid[nx.from]){ S.limSaid[nx.from]=1; say(t("vh_limitAhead",{n:nx.v})); }
+  const lp = r.limits || r.lim;
+  if(lp && settings.limitVoice && settings.limits){
+    const cur=limitAt(r,pr), nx=lp.find(sg => sg.from>pr+5 && sg.from-pr<150);
+    if(nx && cur && nx.v!==cur.v && !S.limSaid[nx.from]){ S.limSaid[nx.from]=1; say(t("vh_limitAhead",{n:nx.v}), false, "alert"); }
   }
   const el=$("alert");
   if(!banner){ el.hidden=true; return; }
@@ -1685,32 +2016,39 @@ function onFix(f){
   const r=S.route;
   let hdg = (f.heading!=null && !isNaN(f.heading) && (f.speed||0)>1) ? f.heading : null;
   if(hdg==null && S.lastFix){ const d=hav(S.lastFix.lat,S.lastFix.lon,f.lat,f.lon); if(d>4){ const o=mkO(S.lastFix.lat,S.lastFix.lon), q=pxy(o,f.lat,f.lon); hdg=(Math.atan2(q.x,q.y)/RAD+360)%360; } }
-  S.lastFix = {lat:f.lat, lon:f.lon, heading:f.heading};
+  if(hdg==null && S.hdg!=null && S.lastFix && hav(S.lastFix.lat,S.lastFix.lon,f.lat,f.lon) <= 4) hdg = S.hdg;   // stopped at lights: keep pointing the same way
+  S.lastFix = {lat:f.lat, lon:f.lon, heading:f.heading}; S.hdg = hdg;
   here = {lat:f.lat, lon:f.lon, at:Date.now()};
-  if(!meMarker) meMarker = L.marker([f.lat,f.lon], {icon:meIcon(hdg), zIndexOffset:1000, keyboard:false}).addTo(map);
-  else { meMarker.setLatLng([f.lat,f.lon]); meMarker.setIcon(meIcon(hdg)); }
-  if(follow) map.panTo([f.lat,f.lon], {animate:true, duration:.4});
+  if(!meMarker){ meMarker = L.marker([f.lat,f.lon], {icon:meIcon(hdg), zIndexOffset:1000, keyboard:false}).addTo(map); cam.car = {lat:f.lat, lon:f.lon}; }
+  else { const el=meMarker.getElement(), hadArrow = el && el.querySelector("path"); if(!!hadArrow !== (hdg!=null)) meMarker.setIcon(meIcon(hdg)); }
 
   const kmh = f.speed!=null && f.speed>=0 ? Math.round(f.speed*3.6) : null;
-  if(r.isDest && !r.pts){ setDial(kmh, false, r.profile==="bike"); if(r.profile!=="bike") checkLimit(f, hdg); routeFromHere(f, false); return; }
-  if(!r.pts) return;
+  S.kmh = kmh; S.nextDist = null;
+  if(r.isDest && !r.pts){ camUpdate(f, hdg, kmh, null); setDial(kmh, false, r.profile==="bike"); if(r.profile!=="bike") checkLimit(f, hdg); routeFromHere(f, false); return; }
+  if(!r.pts){ camUpdate(f, hdg, kmh, null); return; }
 
   const p = pxy(r.o, f.lat, f.lon);
-  let m = nearest(r, p, S.seg-3, S.seg+150);
-  if(m.d > 40){ const g = nearest(r, p, S.seg, r.pts.length); if(g.d < m.d) m = g; }
+  // A practice route with a detour running (missed turn, or driving to the start)
+  if(S.detour && detourFix(f, p, hdg, kmh)) return;
+
+  let m = nearestDir(r, p, S.seg-3, S.seg+150, hdg);
+  if(m.d > 40){ const g = nearestDir(r, p, S.seg, r.pts.length, hdg); if(g.d < m.d) m = g; }
   let onRoute = false;
   if(!r.isDest && S.progress < 30 && m.d > 60){
+    if(S.mode==="gps") startDetour(f, "start");
     showSign({icon:"flag"}, fmtDist(hav(f.lat,f.lon,r.pts[0].lat,r.pts[0].lon)), false); $("signInstr").textContent = t("toStart");
-    finishFix(f, kmh, hdg, r, false); return;
+    camUpdate(f, hdg, kmh, null); finishFix(f, kmh, hdg, r, false); return;
   }
   const leavingStart = r.isDest && S.progress < 20 && m.d <= 150;
   if(m.d > 45 && !leavingStart){
     S.off++;
-    if(S.off>=3 && r.isDest){ showSign({icon:"warn"}, t("rerouting"), true); $("signInstr").textContent = t("newWay"); routeFromHere(f, true); finishFix(f, kmh, hdg, r, false); return; }
+    if(S.off>=3 && r.isDest){ showSign({icon:"warn"}, t("rerouting"), true); $("signInstr").textContent = t("newWay"); routeFromHere(f, true); camUpdate(f, hdg, kmh, null); finishFix(f, kmh, hdg, r, false); return; }
     if(S.off>=3){
-      showSign({icon:"warn"}, t("offRoute"), true); $("signInstr").textContent = t("offRouteTxt", {d:fmtDist(m.d)});
-      if(!S.offSaid){ say(t("v_off"), true); S.offSaid=true; }
-      finishFix(f, kmh, hdg, r, false); return;
+      // Practice route: plan a way back to the route just past the turn we missed
+      showSign({icon:"warn"}, t("offRoute"), true); $("signInstr").textContent = t("findingBack");
+      if(!S.offSaid){ say(t("v_offBack"), true); S.offSaid=true; }
+      if(S.mode==="gps") startDetour(f, "back");
+      camUpdate(f, hdg, kmh, null); finishFix(f, kmh, hdg, r, false); return;
     }
   } else {
     if(S.off>=3 && !r.isDest) say(t("v_back"), true);
@@ -1718,25 +2056,204 @@ function onFix(f){
   }
   if(doneLayer) doneLayer.setLatLngs(r.pts.slice(0, S.seg+1).map(q=>[q.lat,q.lon]).concat([[f.lat,f.lon]]));
 
-  const idx = r.steps.findIndex(s => s.along > S.progress + 4);
-  if(idx<0 || S.progress > r.total-25){ finishFix(f, kmh, hdg, r, onRoute); finish(); return; }
-  const step = r.steps[idx], dist = step.along - S.progress, next = r.steps[idx+1];
+  const g = guide(r, S.progress, S.said, true);
+  if(g==="finish"){ camUpdate(f, hdg, kmh, null); finishFix(f, kmh, hdg, r, onRoute); finish(); return; }
+  camUpdate(f, hdg, kmh, S.nextDist);
+  finishFix(f, kmh, hdg, r, onRoute);
+}
+// Turn-by-turn for a route (the main one or a detour): sign, then spoken prompts at ~1 km, ~200 m and at the turn.
+function guide(rt, prog, said, main){
+  const r = S.route;
+  const idx = rt.steps.findIndex(s => s.along > prog + 4);
+  if(main && (idx<0 || prog > rt.total-25)) return "finish";
+  if(idx<0) return "none";
+  const step = rt.steps[idx], dist = step.along - prog, next = rt.steps[idx+1];
+  S.nextDist = dist;
   showSign(step, fmtDist(dist), false, next && next.icon!=="flag" && next.along-step.along < 300 ? next : null);
-  const k = S.said[idx] || (S.said[idx] = {});
-  const prevAlong = idx>0 ? r.steps[idx-1].along : 0;
-  if(settings.examiner && !r.isDest && !k.ex && dist <= 170){ k.ex=k.km=k.far=k.near=true; if(step.icon==="flag") S.arrSaid=true; say(exLine(step), true); }
+  const k = said[idx] || (said[idx] = {});
+  const prevAlong = idx>0 ? rt.steps[idx-1].along : 0;
+  if(step.mv){
+    if(!k.far && dist <= 220 && dist > 60){ k.far=true; say(t("v_mvSoon", {d:spokenDist(dist), m:lc(t("mv_"+step.mvType))})); }
+    if(!k.near && dist <= 30){ k.near=k.far=true; chime(); say(main && settings.examiner && !r.isDest ? t("ex_mv_"+step.mvType) : t("v_mv_"+step.mvType), true); }
+    return idx;
+  }
+  if(main && settings.examiner && !r.isDest && !k.ex && dist <= 170){ k.ex=k.km=k.far=k.near=true; if(step.icon==="flag") S.arrSaid=true; turnTone(); say(exLine(step), true); }
   if(!k.km && dist <= 1100 && dist > 700 && (step.along - prevAlong) > 1500){ k.km=true; say(t("v_km", {s:lc(step.text)})); }
   if(!k.far && dist <= 220 && dist > 70 && (step.along - prevAlong) > 260){ k.far=true; say(t("v_in", {d:spokenDist(dist), s:lc(step.text)})); }
   if(!k.near && dist <= 45){
     k.near=k.far=true;
-    if(step.icon==="flag") S.arrSaid = true;
+    if(main && step.icon==="flag") S.arrSaid = true;
     const soon = next && (next.along - step.along) < 120 && next.icon!=="flag";
-    const now = step.icon==="flag" ? (r.isDest ? `${step.text}.` : t("v_end")) : step.icon==="rb" ? `${step.text}.` : t("v_now", {s:lc(step.text)});
+    const now = step.icon==="flag" ? (r.isDest || !main ? `${step.text}.` : t("v_end")) : step.icon==="rb" ? `${step.text}.` : t("v_now", {s:lc(step.text)});
+    if(step.icon!=="flag") turnTone();
     say(soon ? now + t("v_then", {s:lc(next.text)}) : now, true);
-    if(soon) (S.said[idx+1] = S.said[idx+1] || {}).far = true;
+    if(soon) (said[idx+1] = said[idx+1] || {}).far = true;
   }
-  finishFix(f, kmh, hdg, r, onRoute);
+  return idx;
 }
+
+// =====================================================================
+// Detours on practice routes: missed a turn, or still on the way to the start
+// =====================================================================
+let detourLayer=null;
+function clearDetour(){ if(detourLayer){ detourLayer.remove(); detourLayer=null; } if(S) S.detour=null; }
+function idxAt(route, along){ const c=route.cum; let lo=0, hi=c.length-1; while(hi-lo>1){ const m=(lo+hi)>>1; if(c[m]<=along) lo=m; else hi=m; } return lo; }
+const angDiff = (a,b) => Math.abs(((a-b)%360+540)%360-180);
+async function startDetour(f, kind){
+  const r=S.route, D0=S.detour;
+  if(S.detourBusy || Date.now()-(S.detourAt||0) < (D0 && D0.pts ? 10000 : 6000)) return;
+  S.detourBusy=true; S.detourAt=Date.now();
+  // Rejoin a little past the turn we missed (so we drive it properly), then a second point to fix the direction of travel.
+  const base = kind==="start" ? 0 : (D0 ? D0.base : S.progress);
+  const nt = kind==="start" ? 0 : ((r.steps.find(st => st.along > base+4) || {}).along ?? base);
+  let aAl = kind==="start" ? Math.min(40, r.total) : (nt-base < 150 ? nt+60 : base+150);
+  aAl = Math.min(aAl, r.total-5);
+  const bAl = Math.min(aAl+160, r.total), A=pointAt(r,aAl), B=pointAt(r,bAl);
+  const coords = `${f.lon},${f.lat};${A.lon},${A.lat}` + (bAl-aAl > 30 ? `;${B.lon},${B.lat}` : "");
+  const brg = S.hdg!=null ? `&bearings=${Math.round(S.hdg)},70;` + (bAl-aAl > 30 ? ";" : "") : "";
+  if(!D0) S.detour = {pending:true, kind, base, aAlong:aAl};
+  try{
+    const data = await osrmFetch(coords, null, "car", brg + "&continue_straight=true");
+    if(!S || S.route!==r || !S.detour) return;
+    const D = {isDetour:true, kind, base, aAlong:aAl, profile:"car", said:{}, seg:0, progress:0, off:0, backN:0};
+    applyOsrm(D, data);
+    const joinAt = (D.stopAlong||[])[1] ?? D.total;
+    D.steps = D.steps.filter(st => st.along < joinAt-15 && st.icon!=="flag");
+    D.steps.push({text: kind==="start" ? t("startHere",{id:r.id}) : t("rejoinStep"), icon:"flag", along:joinAt, mtype:"arrive", mod:"straight"});
+    D.joinAt = joinAt;
+    S.detour = D; drawDetour(D);
+    if(!D0) say(kind==="start" ? t("v_toStart",{t:spokenDur(D.duration)}) : t("v_wayBack"), false);
+    if(S.lastFix) setTimeout(() => { if(S && S.detour===D) onFix({...S.lastFix, speed:null}); }, 0);
+  }catch(e){
+    if(S && S.detour && S.detour.pending) S.detour = null;
+  }finally{ if(S) S.detourBusy=false; }
+}
+function drawDetour(D){
+  if(detourLayer) detourLayer.remove();
+  const ll = D.pts.map(q => [q.lat,q.lon]);
+  detourLayer = L.layerGroup([
+    L.polyline(ll, {color:"#a48cff", weight:14, opacity:.18, lineJoin:"round"}),
+    L.polyline(ll, {color:"#03070d", weight:8, opacity:.85, lineJoin:"round"}),
+    L.polyline(ll, {color:"#a48cff", weight:4.5, opacity:1, lineJoin:"round", dashArray:"10 7"})
+  ]).addTo(map);
+}
+// Returns true while the detour is in charge of this fix.
+function detourFix(f, p, hdg, kmh){
+  const r=S.route, D=S.detour;
+  // Back on the practice route, heading the right way? Then the main route takes over again.
+  const lo = idxAt(r, Math.max(0, D.base-300)), hi = idxAt(r, Math.min(r.total, D.aAlong+400));
+  const mm = nearest(r, p, lo, hi);
+  const ok = mm.d < 22 && (hdg==null || angDiff(hdg, pointAt(r, mm.along).heading) < 55);
+  D.backN = ok ? (D.backN||0)+1 : 0;
+  if(D.backN >= 2){
+    const resumeAt = mm.along;
+    clearDetour(); S.seg = mm.seg; S.progress = resumeAt; S.off=0; S.offSaid=false;
+    r.steps.forEach((st,i) => { if(st.along > resumeAt+4) delete S.said[i]; });
+    if(r.stops && resumeAt > 30) say(t("v_back"), true);
+    return false;
+  }
+  if(D.pending){
+    if(D.kind==="start"){ showSign({icon:"flag"}, fmtDist(hav(f.lat,f.lon,r.pts[0].lat,r.pts[0].lon)), false); $("signInstr").textContent = t("toStart"); }
+    else { showSign({icon:"warn"}, t("offRoute"), true); $("signInstr").textContent = t("findingBack"); }
+    camUpdate(f, hdg, kmh, null); finishFix(f, kmh, hdg, r, false); return true;
+  }
+  const q = pxy(D.o, f.lat, f.lon);
+  let dm = nearest(D, q, D.seg-3, D.seg+150);
+  if(dm.d > 40){ const g=nearest(D, q, D.seg, D.pts.length); if(g.d < dm.d) dm=g; }
+  if(dm.d > 45){ if(++D.off >= 3) startDetour(f, D.kind); }      // went another way: plan again
+  else { D.off=0; D.seg=dm.seg; D.progress=Math.max(D.progress, dm.along); }
+  const g = guide(D, D.progress, D.said, false);
+  if(g==="none"){ showSign({icon:"flag"}, "", false); $("signInstr").textContent = D.kind==="start" ? t("startHere",{id:r.id}) : t("rejoinStep"); }
+  $("sign").classList.add("detour");
+  camUpdate(f, hdg, kmh, S.nextDist);
+  finishFix(f, kmh, hdg, r, false);
+  return true;
+}
+
+// =====================================================================
+// Camera: heading-up or north-up, look-ahead, zoom by speed
+// =====================================================================
+const cam = {headUp: store.get("ttr-headup", true) && CAN_ROTATE, target:0, raf:0, zoomAt:0, loop:0, anim:null, car:null, tz:null};
+// Rotate the map on its own (browsing, or the compass button with no GPS fix yet).
+function turnMap(target, now){
+  if(!CAN_ROTATE) return;
+  cam.target = ((target%360)+360)%360;
+  if(now){ cancelAnimationFrame(cam.raf); cam.raf=0; map.setBearing(cam.target); renderCompass(); turnArrow(); return; }
+  if(cam.raf) return;
+  const step = () => {
+    const cur = map.getBearing(), d = ((cam.target-cur)%360+540)%360-180;
+    if(Math.abs(d) < 0.4){ map.setBearing(cam.target); cam.raf=0; }
+    else { map.setBearing(cur + d*0.16); cam.raf = requestAnimationFrame(step); }
+    renderCompass(); turnArrow();
+  };
+  cam.raf = requestAnimationFrame(step);
+}
+// Where the map centre must be so the car sits at the look-ahead point on screen, for a given bearing and zoom.
+function camCenter(car, b, z){
+  const sz = map.getSize(), hb = $("hud").hidden ? 0 : $("hud").getBoundingClientRect().bottom, top = Math.max(hb, 0) + 8, bottom = sz.y - sheetH();
+  const carY = cam.headUp ? top + (bottom-top)*0.74 : (top+bottom)/2, dy = carY - sz.y/2;
+  const mpp = 40075016.686*Math.cos(car.lat*RAD)/(256*Math.pow(2, z)), az = (-b)*RAD, dist = dy*mpp;   // screen-down points along bearing -b
+  return L.latLng(car.lat + Math.cos(az)*dist/111320, car.lon + Math.sin(az)*dist/(111320*Math.cos(car.lat*RAD)));
+}
+// Called on every GPS fix: glide the car, the map, its rotation and zoom to the new state over about a second.
+function camUpdate(f, hdg, kmh, nextDist, force){
+  const bike = S && S.route.profile==="bike";
+  if(cam.headUp && hdg!=null && (kmh==null || kmh >= 3 || force)) cam.target = ((-hdg%360)+360)%360;
+  else if(!cam.headUp) cam.target = 0;
+  // zoom: closer in town and before turns, further out at speed
+  let z = kmh==null ? 17 : bike ? (kmh < 18 ? 17.5 : 17) : kmh < 25 ? 17.5 : kmh < 55 ? 17 : kmh < 85 ? 16.25 : 15.5;
+  if(nextDist!=null && nextDist < 250 && (kmh==null || kmh < 85)) z = Math.max(z, 17.25);
+  if(cam.tz==null || force || (Math.abs(z-cam.tz) >= 0.5 && Date.now()-cam.zoomAt > 4000)){ cam.tz = z; cam.zoomAt = Date.now(); }
+  const now = performance.now(), from = cam.car || {lat:f.lat, lon:f.lon};
+  const gap = cam.lastAt ? now - cam.lastAt : 1000; cam.lastAt = now;
+  cam.anim = {from:{lat:from.lat, lon:from.lon, b:getBear(), z:map.getZoom()}, to:{lat:f.lat, lon:f.lon, b:cam.target, z:cam.tz}, t0:now, dur: force ? 350 : Math.max(250, Math.min(1100, gap))};
+  if(!cam.loop) cam.loop = requestAnimationFrame(camFrame);
+}
+function camFrame(){
+  cam.loop = 0;
+  const a = cam.anim; if(!a || !S){ return; }
+  const k = Math.min(1, (performance.now()-a.t0)/a.dur), e = k*(2-k);
+  const car = {lat: a.from.lat + (a.to.lat-a.from.lat)*k, lon: a.from.lon + (a.to.lon-a.from.lon)*k};
+  cam.car = car;
+  if(meMarker) meMarker.setLatLng([car.lat, car.lon]);
+  if(follow){
+    const b = a.from.b + (((a.to.b-a.from.b)%360+540)%360-180)*e, z = a.from.z + (a.to.z-a.from.z)*e;
+    if(CAN_ROTATE) map.setBearing(b);
+    const c = camCenter(car, CAN_ROTATE ? b : 0, z);
+    if(Math.abs(z - map.getZoom()) > 0.001) map.setView(c, z, {animate:false}); else map.panTo(c, {animate:false, noMoveStart:true});
+    renderCompass();
+  }
+  turnArrow();
+  if(k < 1) cam.loop = requestAnimationFrame(camFrame);
+}
+function renderCompass(){
+  const b = getBear();
+  ["compassBtn","northBtn"].forEach(id => { const el=$(id); if(!el) return; const n=el.querySelector(".needle"); if(n) n.style.transform = `rotate(${b}deg)`; });
+  $("compassBtn").classList.toggle("on", cam.headUp);
+  $("compassBtn").setAttribute("aria-label", cam.headUp ? t("headUp") : t("northUp"));
+  $("northBtn").hidden = !!S || Math.abs(((b+180)%360)-180) < 1;
+}
+map.on("rotate", () => { if(!cam.raf){ renderCompass(); turnArrow(); } });
+$("compassBtn").onclick = () => {
+  if(!CAN_ROTATE){ toast(t("northUp")); return; }
+  cam.headUp = !cam.headUp; store.set("ttr-headup", cam.headUp); toast(cam.headUp ? t("headUp") : t("northUp"));
+  follow = true; $("recenter").hidden = true;
+  if(S && S.lastFix) camUpdate(S.lastFix, S.hdg, S.kmh, S.nextDist, true);
+  else if(!cam.headUp) turnMap(0);
+  renderCompass();
+};
+$("northBtn").onclick = () => turnMap(0);
+// Overview: the rest of the route and where it ends; tap re-centre to carry on following.
+$("overBtn").onclick = () => {
+  if(!S) return;
+  follow = false; $("recenter").hidden = false; turnMap(0, true);
+  const r = S.route, D = S.detour && S.detour.pts ? S.detour : null, pts=[];
+  if(S.lastFix) pts.push([S.lastFix.lat, S.lastFix.lon]);
+  if(D) D.pts.slice(D.seg).forEach(q => pts.push([q.lat,q.lon]));
+  if(r.pts) r.pts.slice(D ? idxAt(r, D.aAlong) : S.seg).forEach(q => pts.push([q.lat,q.lon]));
+  else if(r.dest) pts.push([r.dest.lat, r.dest.lon]);
+  if(pts.length > 1){ const b=L.latLngBounds(pts); map.fitBounds(b, {paddingTopLeft:[30, ($("hud").getBoundingClientRect().bottom||60)+10], paddingBottomRight:[30, sheetH()+20], maxZoom:17}); }
+};
 // Speed, limits, alerts, recording and stats: shared by every fix
 function finishFix(f, kmh, hdg, r, onRoute){
   if(r.profile==="bike"){
@@ -1745,11 +2262,14 @@ function finishFix(f, kmh, hdg, r, onRoute){
     if(S.mode==="gps") record(f, kmh, r, false);
     updateStats(); return;
   }
-  if(onRoute && r.lim){ const L0=limitAt(r, S.progress); if(L0) setLimit(L0, true); } else checkLimit(f, hdg);
+  // Route data first (TomTom + OpenStreetMap); anywhere it has a gap, ask live. The last limit stays until a new one is known.
+  const L0 = onRoute ? limitAt(r, S.progress) : null;
+  if(L0) setLimit(L0, true, f); else checkLimit(f, hdg);
+  showLimit();
   const over = kmh!=null && SL.limit && kmh > SL.limit.kmh + 3;
   S.overN = over ? S.overN+1 : 0;
   setDial(kmh, S.overN>=2);
-  if(S.overN>=3 && settings.speedWarn && settings.limits && Date.now()-S.lastWarn > 30000){ S.lastWarn=Date.now(); say(t("v_check")); }
+  if(S.overN>=3 && settings.speedWarn && settings.limits && Date.now()-S.lastWarn > 30000){ S.lastWarn=Date.now(); say(t("v_check"), false, "alert"); }
   if(onRoute) updateAlerts(r); else $("alert").hidden=true;
   if(ttKey() && r.pts && S.ttAt && Date.now()-S.ttAt > 5*60000) liveTraffic(r, f, false);
   if(S.mode==="gps") record(f, kmh, r, onRoute);
@@ -1976,6 +2496,7 @@ function applyLang(){
   renderDestCard(); renderPt(); renderKey(); renderWx(); renderBikeSpeed();
   if(rc.ready) renderRain();
   if(S) updateStats();
+  if(window.renderTheoryEntry) renderTheoryEntry();
 }
 
 // =====================================================================
@@ -2002,4 +2523,5 @@ function applyLang(){
     await loadIntel(r, r.id);
     if(r===practice){ renderIntel(); if(tab==="test" && !S) drawRoute(r, false); }
   }
+  for(const r of ROUTES){ if(r.ok){ await loadRouteLimits(r, r.id+"-"+Math.round(r.total)); if(r===practice) renderIntel(); } }
 })();
