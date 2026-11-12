@@ -1654,8 +1654,10 @@ function renderPrep(){
     const [title, detail] = it[lang] || it.en;
     return `<button class="chk ${on?"on":""}" type="button" data-k="${it.k}"><span class="box">${ico("check")}</span><span class="meta"><b>${esc(title)}${it._extra||""}</b><small>${esc(detail)}</small></span></button>`;
   }).join("")}</div>`).join("");
-  $("prepCount").textContent = `${done}/${total}`;
+  $("prepCount").textContent = `${done}/${total}`; $("prepBar").style.width = Math.round(100*done/total)+"%";
 }
+try{ $("prepBox").open = store.get("ttr-prepOpen", false); }catch(e){}
+$("prepBox").addEventListener("toggle", () => store.set("ttr-prepOpen", $("prepBox").open));
 $("prepList").addEventListener("click", e => { const b=e.target.closest("[data-k]"); if(!b || b.dataset.k==="routes") return; prep[b.dataset.k]=!prep[b.dataset.k]; store.set("ttr-prep", prep); renderPrep(); });
 
 // =====================================================================
@@ -1930,7 +1932,8 @@ function startSession(r, mode){
   document.body.classList.toggle("riding", r.profile==="bike");
   if(hereMarker){ hereMarker.remove(); hereMarker=null; }
   S = {route:r, mode, seg:0, progress:0, off:0, offSaid:false, said:{}, hzSaid:{}, limSaid:{}, startedAt:Date.now(), finished:false, lastFix:null, routing:false, lastRoute:0, overN:0, lastWarn:0,
-       hdg:null, detour:null, rec:{track:[], dist:0, maxV:0, speeding:[], brakes:[], stopMin:{}, last:null, overRun:0, lastBrake:0}};
+       hdg:null, detour:null, rec:{track:[], dist:0, maxV:0, speeding:[], brakes:[], stopMin:{}, last:null, overRun:0, lastBrake:0,
+         acc:[], corners:[], lastAcc:0, lastCorner:0, turnV:{}, rbV:{}, bumpV:{}, slowT:0, slow:[], mvMin:{}, missedTurns:0, smoothN:0, roughN:0}};
   SL.limit=null; SL.lastPos=null; SL.lastAt=0; SL.setAt=null;
   hideResults(); clearDetour();
   document.body.classList.add("driving");
@@ -2115,11 +2118,36 @@ function record(f, kmh, r, onRoute){
   const R=S.rec, now=Date.now(), v=f.speed;
   if(v==null || v<0) return;
   if(R.last){
-    const dt=(now-R.last.t)/1000;
-    if(dt>0 && dt<3 && R.last.v>4 && (v-R.last.v)/dt < -3.5 && now-R.lastBrake > 6000){ R.brakes.push({lat:f.lat, lon:f.lon, v:Math.round(R.last.v*3.6)}); R.lastBrake=now; }
+    const dt=(now-R.last.t)/1000, acc = dt>0 ? (v-R.last.v)/dt : 0;
+    if(dt>0 && dt<3 && R.last.v>4 && acc < -3.5 && now-R.lastBrake > 6000){ R.brakes.push({lat:f.lat, lon:f.lon, v:Math.round(R.last.v*3.6)}); R.lastBrake=now; }
+    // pulling away or speeding up too hard
+    if(dt>0 && dt<3 && acc > 2.8 && now-R.lastAcc > 8000){ R.acc.push({lat:f.lat, lon:f.lon, v:Math.round(v*3.6)}); R.lastAcc=now; }
+    // turning too hard: sideways force from speed x rate of turn
+    if(dt>0 && dt<3 && v>5 && S.hdg!=null && R.lastHdg!=null){
+      const lat = v * angDiff(S.hdg, R.lastHdg)*RAD / dt;
+      if(lat > 3.4 && now-R.lastCorner > 8000){ R.corners.push({lat:f.lat, lon:f.lon, v:Math.round(v*3.6)}); R.lastCorner=now; }
+    }
+    if(dt>0 && dt<3 && v>2){ if(Math.abs(acc) < 1.5) R.smoothN++; else R.roughN++; }
     R.dist += hav(R.last.lat,R.last.lon,f.lat,f.lon);
   }
+  R.lastHdg = S.hdg;
   R.last={t:now, v, lat:f.lat, lon:f.lon}; R.maxV=Math.max(R.maxV, v);
+  // very slow on a fast road for a long time (lack of progress)
+  if(SL.limit && SL.limit.kmh >= 60 && kmh > 10 && kmh < SL.limit.kmh*0.5){ R.slowT += R.lastSlowAt ? (now-R.lastSlowAt)/1000 : 0; R.lastSlowAt = now;
+    if(R.slowT > 40 && !R.slowLogged){ R.slow.push({lat:f.lat, lon:f.lon, v:kmh, l:SL.limit.v}); R.slowLogged = true; } }
+  else { R.slowT = 0; R.lastSlowAt = 0; R.slowLogged = false; }
+  if(onRoute && r.steps){
+    const pr = S.progress;
+    r.steps.forEach((st,i) => {
+      // speed at the turn itself (left/right turns only)
+      if(st.icon==="arrow" && /^(left|right|sharp left|sharp right)$/.test(st.mod||"") && st.along > 20 && Math.abs(pr-st.along) < 12) R.turnV[i] = Math.max(R.turnV[i]||0, v);
+      // speed in the last 35 m before a roundabout
+      if(st.icon==="rb" && pr > st.along-35 && pr < st.along-3) R.rbV[i] = Math.max(R.rbV[i]||0, v);
+      // a manoeuvre spot: did we stop there?
+      if(st.mv && Math.abs(pr-st.along) < 40) R.mvMin[i] = Math.min(R.mvMin[i] ?? 99, v);
+    });
+    (r.hz||[]).forEach((h,i) => { if(h.type==="bump" && Math.abs(h.along-pr) < 8) R.bumpV[i] = Math.max(R.bumpV[i]||0, v); });
+  }
   const over = SL.limit && kmh > SL.limit.kmh + 3;
   if(over){ R.overRun++; if(R.overRun===3) R.speeding.push({lat:f.lat, lon:f.lon, v:kmh, l:SL.limit.v}); else if(R.overRun>3){ const e=R.speeding[R.speeding.length-1]; e.v=Math.max(e.v,kmh); } }
   else R.overRun=0;
@@ -2166,7 +2194,7 @@ function onFix(f){
       // Practice route: plan a way back to the route just past the turn we missed
       showSign({icon:"warn"}, t("offRoute"), true); $("signInstr").textContent = t("findingBack");
       if(!S.offSaid){ say(t("v_offBack"), true); S.offSaid=true; }
-      if(S.mode==="gps") startDetour(f, "back");
+      if(S.mode==="gps"){ if(!S.detour && !S.detourBusy) S.rec.missedTurns++; startDetour(f, "back"); }
       camUpdate(f, hdg, kmh, null); finishFix(f, kmh, hdg, r, false); return;
     }
   } else {
@@ -2441,16 +2469,39 @@ function buildReport(){
   if(r.profile==="bike") return {ride:true, rid:null, name:destName(r), date:Date.now(), mins:Math.max(1, Math.round(secs/60)), km:R.dist/1000,
     avg:Math.round(R.dist/secs*3.6), max:Math.round(R.maxV*3.6), climb: r.elev ? r.elev.climb : null, score:100};
   const stops = Object.values(R.stopMin), rolled = stops.filter(s => s.v >= 1.0);
-  const events = [
-    ...R.speeding.map(e => ({k:"speed", ...e})),
-    ...R.brakes.map(e => ({k:"brake", ...e})),
-    ...rolled.map(s => ({k:"roll", lat:s.lat, lon:s.lon, v:Math.round(s.v*3.6)})),
-  ];
-  const pulls = S.ex ? [S.ex.filter(x => x.ok).length, S.ex.length] : null, missed = S.ex ? S.ex.filter(x => x.state==="skip").length : 0;
-  const score = Math.max(0, Math.min(100, 100 - 6*R.speeding.length - 5*R.brakes.length - 8*rolled.length - 5*missed));
+  // Faults graded like the RSA sheet: 1 = minor, 2 = serious, 3 = dangerous. Each has a type (for "4 of the same")
+  // and a heading (for "6 under one heading").
+  const F = [], add = (k, g, h, e) => F.push({k, g, h, ...e});
+  R.speeding.forEach(e => { const over = e.v - e.l; add("speed", (e.l <= 60 ? over > 10 : over > 15) ? 3 : 2, "speed", e); });
+  rolled.forEach(s => add("roll", s.v*3.6 >= 5 ? 3 : 2, "junction", {lat:s.lat, lon:s.lon, v:Math.round(s.v*3.6)}));
+  R.brakes.forEach(e => add("brake", 2, "control", e));
+  R.corners.forEach(e => add("corner", 2, "control", e));
+  R.acc.forEach(e => add("accel", 1, "control", e));
+  Object.entries(R.turnV).forEach(([i,v]) => { const st=r.steps[i]; if(v*3.6 > 30) add("turn", 2, "junction", {v:Math.round(v*3.6), lat:st && pointAt(r,st.along).lat, lon:st && pointAt(r,st.along).lon, dir: /left/.test(st.mod) ? "left" : "right"}); });
+  Object.entries(R.rbV).forEach(([i,v]) => { if(v*3.6 > 35){ const p=pointAt(r, r.steps[i].along); add("rb", 2, "junction", {v:Math.round(v*3.6), lat:p.lat, lon:p.lon}); } });
+  Object.entries(R.bumpV).forEach(([i,v]) => { const h=(r.hz||[])[i]; if(v*3.6 > 25) add("bump", 1, "speed", {v:Math.round(v*3.6), lat:h&&h.lat, lon:h&&h.lon}); });
+  R.slow.forEach(e => add("progress", 1, "speed", e));
+  if(!r.isDest && r.mv) r.steps.forEach((st,i) => { if(st.mv && st.along < S.progress - 30 && (R.mvMin[i] ?? 99) > 0.6) add("mv", 1, "manoeuvre", {m:t("mv_"+st.mvType)}); });
+  for(let i=0;i<R.missedTurns;i++) add("route", 1, "route", {});
+  if(S.ex) S.ex.filter(x => x.state==="skip").forEach(() => add("pull", 2, "route", {}));
+  const g2 = F.filter(x => x.g===2), g3 = F.filter(x => x.g===3);
+  const byType = {}, byHead = {}; g2.forEach(x => { byType[x.k]=(byType[x.k]||0)+1; byHead[x.h]=(byHead[x.h]||0)+1; });
+  let fail = null;
+  if(g3.length) fail = "g3";
+  else if(Object.values(byType).some(n => n>=4)) fail = "same4";
+  else if(Object.values(byHead).some(n => n>=6)) fail = "head6";
+  else if(g2.length >= 9) fail = "total9";
+  const n1 = F.filter(x => x.g===1).length;
+  let score = 100 - 2*n1 - 7*g2.length - 30*g3.length;
+  const smooth = R.smoothN+R.roughN > 20 ? Math.round(100*R.smoothN/(R.smoothN+R.roughN)) : null;
+  if(smooth!=null && smooth < 85) score -= Math.round((85-smooth)/3);           // jerky overall
+  score = Math.max(0, Math.min(100, score));
+  if(fail) score = Math.min(score, 59);
+  const prev = r.isDest ? null : reports.find(x => x.rid===r.id);
+  const pulls = S.ex ? [S.ex.filter(x => x.ok).length, S.ex.length] : null;
   return {rid: r.isDest ? null : r.id, name: r.isDest ? destName(r) : routeName(r), date: Date.now(), mins: Math.max(1, Math.round(secs/60)),
     km: R.dist/1000, avg: Math.round(R.dist/secs*3.6), max: Math.round(R.maxV*3.6), sp: R.speeding.length, br: R.brakes.length,
-    st: [stops.length-rolled.length, stops.length], pull: pulls, events, score};
+    st: [stops.length-rolled.length, stops.length], pull: pulls, events: F, faults:[n1, g2.length, g3.length], fail, smooth, prev: prev ? prev.score : null, v:2, score};
 }
 function showReport(rep){
   if(rep.ride){
@@ -2459,7 +2510,7 @@ function showReport(rep){
     $("rScore").textContent = num(rep.km, rep.km < 10 ? 1 : 0); $("rGrade").textContent = t("rideDone");
     $("rSub").textContent = `${rep.name} · ${dayFmt(rep.date)} ${hhmm(rep.date)}`;
     $("rStats").innerHTML = stat(t("rep_time"), `${rep.mins} min`) + stat(t("rep_dist"), `${num(rep.km,1)} km`) + stat(t("rep_avg"), `${rep.avg} km/h`) + stat(t("rep_max"), `${rep.max} km/h`) + (rep.climb!=null ? stat(t("rep_climb"), `${rep.climb} m`) : "");
-    $("rEvents").innerHTML = ""; $("report").classList.add("ride"); document.querySelector("#report .kicker").textContent = t("rideTitle"); $("report").hidden = false; return;
+    $("rEvents").innerHTML = ""; $("rVerdict").hidden = true; $("report").classList.add("ride"); document.querySelector("#report .kicker").textContent = t("rideTitle"); $("report").hidden = false; return;
   }
   $("report").classList.remove("ride"); document.querySelector("#report .kicker").textContent = t("rep_title");
   const g=grade(rep.score), C=276.5;
@@ -2469,12 +2520,31 @@ function showReport(rep){
   $("rGrade").textContent = t("grade_"+g);
   $("rSub").textContent = `${rep.name} · ${dayFmt(rep.date)} ${hhmm(rep.date)}`;
   const stat = (l, v) => `<div><b>${esc(v)}</b><span>${esc(l)}</span></div>`;
+  if(rep.v===2){
+    const trend = rep.prev!=null ? rep.score - rep.prev : null;
+    $("rSub").innerHTML = `${esc(rep.name)} · ${dayFmt(rep.date)} ${hhmm(rep.date)}` + (trend!=null ? ` · <b class="${trend>=0?"up":"down"}">${trend>=0?"▲ +":"▼ "}${trend} ${esc(t("rep_vsLast"))}</b>` : "");
+    $("rVerdict").hidden = false;
+    $("rVerdict").className = "verdict " + (rep.fail ? "fail" : "pass");
+    $("rVerdict").innerHTML = `${ico(rep.fail ? "stop" : "check")}<span><b>${esc(t(rep.fail ? "rep_fail" : "rep_pass"))}</b><small>${esc(rep.fail ? t("fail_"+rep.fail) : t("rep_passWhy"))}</small></span>`;
+    $("rStats").innerHTML = stat(t("g1"), rep.faults[0]) + stat(t("g2"), rep.faults[1]) + stat(t("g3"), rep.faults[2]) + (rep.smooth!=null ? stat(t("rep_smooth"), rep.smooth+"%") : "")
+      + stat(t("rep_time"), `${rep.mins} min`) + stat(t("rep_dist"), `${num(rep.km,1)} km`) + stat(t("rep_avg"), `${rep.avg} km/h`) + stat(t("rep_max"), `${rep.max} km/h`)
+      + (rep.st[1] ? stat(t("rep_stops"), `${rep.st[0]}/${rep.st[1]}`) : "") + (rep.pull && rep.pull[1] ? stat(t("rep_pull"), `${rep.pull[0]}/${rep.pull[1]}`) : "");
+    const IC2 = {speed:"speed", roll:"stop", brake:"give_way", corner:"route", accel:"descend", turn:"arrow", rb:"rb", bump:"bump", progress:"clock", mv:"uturn", route:"pin", pull:"stop"};
+    // the same fault several times shows once, with how often and the worst speed
+    const groups = [];
+    rep.events.forEach(e => { const key = e.k+"|"+e.g+"|"+(e.l||"")+"|"+(e.dir||"")+"|"+(e.m||""); let gp = groups.find(x => x.key===key);
+      if(!gp){ gp = {key, e:{...e}, n:0}; groups.push(gp); } gp.n++; if(e.v!=null && e.v > (gp.e.v||0)) gp.e.v = e.v; });
+    groups.sort((a,b) => b.e.g-a.e.g || b.n-a.n);
+    $("rEvents").innerHTML = groups.length ? groups.map(({e,n}) => `<div class="ev ev-g${e.g}">${ico(IC2[e.k]||"pin")}<span>${esc(t("ev2_"+e.k, {...e, dir: e.dir ? t("dir_"+e.dir) : ""}))}${n>1 ? ` <b class="evn">×${n}</b>` : ""}</span><em>${esc(t("gShort",{g:e.g}))}</em></div>`).join("")
+      : `<div class="ev ev-ok">${ico("check")}<span>${t("ev_none2")}</span></div>`;
+  } else {
+  $("rVerdict").hidden = true;
   $("rStats").innerHTML = stat(t("rep_time"), `${rep.mins} min`) + stat(t("rep_dist"), `${num(rep.km,1)} km`) + stat(t("rep_avg"), `${rep.avg} km/h`) +
     stat(t("rep_max"), `${rep.max} km/h`) + stat(t("rep_speeding"), rep.sp) + stat(t("rep_brakes"), rep.br) + (rep.st[1] ? stat(t("rep_stops"), `${rep.st[0]}/${rep.st[1]}`) : "") + (rep.pull && rep.pull[1] ? stat(t("rep_pull"), `${rep.pull[0]}/${rep.pull[1]}`) : "");
-  const icon = {speed:"speed", brake:"warn", roll:"stop"};
   $("rEvents").innerHTML = rep.events.length ? rep.events.map(e => `<div class="ev ev-${e.k}">${ico(e.k==="roll"?"stop":e.k==="speed"?"speed":"bump")}<span>${esc(
       e.k==="speed" ? t("ev_speed",{v:e.v, l:e.l}) : e.k==="brake" ? t("ev_brake",{v:e.v}) : t("ev_roll",{v:e.v}))}</span></div>`).join("")
     : `<div class="ev ev-ok">${ico("check")}<span>${t("ev_none")}</span></div>`;
+  }
   $("report").hidden = false;
 }
 $("rClose").onclick = () => { $("report").hidden = true; };
@@ -2485,7 +2555,8 @@ function drawTrack(track, rep){
   const flush = () => { if(run.length>1) L.polyline(run.map(p => [p[0],p[1]]), {color: flag ? "#ff4f6d" : "#33e3a1", weight:4, opacity:.95}).addTo(markLayer); };
   for(let i=1;i<track.length;i++){ run.push(track[i]); if(track[i][2]!==flag){ flush(); run=[track[i]]; flag=track[i][2]; } }
   flush();
-  (rep && rep.events || []).forEach(e => L.circleMarker([e.lat,e.lon], {radius:7, color:"#05080f", weight:2, fillColor: e.k==="speed"?"#ff4f6d":e.k==="roll"?"#ff4f6d":"#ffb547", fillOpacity:1}).addTo(markLayer));
+  (rep && rep.events || []).filter(e => e.lat!=null && e.lon!=null).forEach(e => L.circleMarker([e.lat,e.lon], {radius:7, color:"#05080f", weight:2,
+    fillColor: e.g===3 || e.k==="speed" || e.k==="roll" ? "#ff4f6d" : e.g===1 ? "#33e3a1" : "#ffb547", fillOpacity:1}).addTo(markLayer));
 }
 
 // =====================================================================
@@ -2621,7 +2692,7 @@ function applyLang(){
 // =====================================================================
 // Boot
 // =====================================================================
-const APP_V = 14;
+const APP_V = 16;
 // Shows which version is running, and reports script errors on screen so problems on the phone are visible.
 $("appVer").textContent = "Drive Ireland · v" + APP_V;
 window.addEventListener("error", e => { if(/\/(app|data|theory)\.js/.test(e.filename||"")) toast("Error: " + (e.message||"") + " (" + (e.filename||"").split("/").pop().split("?")[0] + ":" + e.lineno + ")", 8000); });

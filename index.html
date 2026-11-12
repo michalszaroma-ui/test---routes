@@ -131,6 +131,14 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 .tsay p{margin:3px 0 0;font-size:12.5px;line-height:1.4;color:var(--text)}
 .tspk{position:absolute;right:6px;top:6px;width:28px;height:28px;border-radius:9px;display:grid;place-items:center;color:var(--cyan);background:rgba(56,225,255,.12)}
 .tspk svg{width:16px;height:16px}
+.cattiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));gap:8px}
+.cattile{position:relative;overflow:hidden;display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:12px;border-radius:16px;background:var(--card);border:1px solid var(--edge);color:var(--text);text-align:left;min-height:118px}
+.cattile b{font-size:14px;line-height:1.25}.cattile small{color:var(--muted);font-size:12px}
+.cattile i{position:absolute;left:0;bottom:0;height:3px;background:var(--green)}
+.catpics{display:flex;gap:4px;margin-bottom:4px}.catpics svg{width:34px;height:34px}
+.cattile.g-reg{border-color:rgba(255,79,109,.28)}.cattile.g-warn{border-color:rgba(255,209,0,.32)}.cattile.g-rw{border-color:rgba(243,146,0,.38)}.cattile.g-info,.cattile.g-mw{border-color:rgba(56,140,255,.35)}
+.catbar{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:10px 0 2px}
+.catback{color:var(--cyan);font-weight:600;font-size:14px;padding:6px 0}
 .qen{display:block;font-style:normal;font-size:13px;color:#ffd100;margin-top:2px}
 .cseg{margin:8px 0 10px}
 .rdesc{margin:4px 0 8px;padding-left:22px;font-size:13px;line-height:1.55;color:var(--text)}.rdesc b{color:#c9bcff;font-weight:600}
@@ -463,6 +471,22 @@ body.riding .sicon{color:var(--green)}
 .rs b.dim{font-weight:500;color:#c9d6ea}
 .rs small{color:var(--dim);font-family:var(--display);font-size:12px}
 .pgroup{display:grid;gap:6px;margin-bottom:12px}
+.prepbox{margin:16px 0 6px;border-radius:18px;background:var(--card);border:1px solid var(--edge);overflow:hidden}
+.prepbox summary{list-style:none;display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer}
+.prepbox summary::-webkit-details-marker{display:none}
+.prepbox .orb{flex:0 0 40px;height:40px;border-radius:12px;display:grid;place-items:center;color:var(--green);background:rgba(51,227,161,.12)}
+.prepbox .meta{flex:1;min-width:0}.prepbox .meta b{display:block;font-size:15px}.prepbox .meta small{display:block;color:var(--muted);font-size:12px;margin-top:1px}
+.pbar{display:block;height:4px;border-radius:2px;background:rgba(255,255,255,.08);margin-top:7px;overflow:hidden}.pbar i{display:block;height:100%;background:var(--green);border-radius:2px;width:0}
+.prepbox em{font-style:normal;font-family:var(--display);color:var(--green);font-size:14px}
+.prepbox .chev{color:var(--muted);font-size:22px;transition:transform .2s}.prepbox[open] .chev{transform:rotate(90deg)}
+.prepbox #prepList{padding:0 10px 4px}.prepbox>.note{padding:0 14px 12px;margin:0}
+.verdict{display:flex;gap:12px;align-items:center;padding:12px 14px;border-radius:16px;text-align:left;margin-top:16px}
+.verdict b{font-family:var(--display);letter-spacing:.02em}.evn{color:var(--muted);font-weight:700;margin-left:4px}
+.verdict svg{flex:0 0 22px;width:22px;height:22px}.verdict b{display:block;font-size:15px}.verdict small{display:block;font-size:12px;color:var(--muted);margin-top:2px;line-height:1.35}
+.verdict.pass{background:rgba(51,227,161,.12);color:var(--green)}.verdict.fail{background:rgba(255,79,109,.12);color:var(--red)}
+.ev em{margin-left:auto;font-style:normal;font-size:11px;font-weight:700;padding:2px 7px;border-radius:999px;white-space:nowrap}
+.ev-g1 em{background:rgba(51,227,161,.15);color:var(--green)}.ev-g2 em{background:rgba(56,140,255,.18);color:#7fb2ff}.ev-g3 em{background:rgba(255,79,109,.18);color:var(--red)}
+#rSub b.up{color:var(--green)}#rSub b.down{color:var(--amber)}
 .ph{font-family:var(--display);font-size:12px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:4px 4px 2px}
 .chk{display:flex;gap:12px;align-items:flex-start;width:100%;text-align:left;padding:11px 12px;border-radius:14px;background:var(--card);border:1px solid transparent}
 .chk .box{flex:0 0 24px;height:24px;border-radius:7px;border:1.5px solid var(--edge-2);display:grid;place-items:center;color:transparent;margin-top:1px;transition:all .15s}
@@ -663,9 +687,12 @@ body.riding .sicon{color:var(--green)}
       <p class="note" data-t="practiceNote"></p>
       <div class="sub"><span data-t="reportsTitle"></span></div>
       <div class="list" id="reportList"></div>
-      <div class="sub"><span data-t="prepTitle"></span><span id="prepCount"></span></div>
-      <div id="prepList"></div>
-      <p class="note" data-t="prepNote"></p>
+      <details class="prepbox" id="prepBox">
+        <summary><span class="orb"><svg class="i" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V2.5h6V4M8.5 11l2 2 4-4"/></svg></span>
+          <span class="meta"><b data-t="prepTitle"></b><small data-t="prepSub"></small><i class="pbar"><i id="prepBar"></i></i></span><em id="prepCount"></em><span class="chev">›</span></summary>
+        <div id="prepList"></div>
+        <p class="note" data-t="prepNote"></p>
+      </details>
     </section>
 
     <!-- MORE -->
@@ -741,6 +768,7 @@ body.riding .sicon{color:var(--green)}
       <div class="ring"><svg viewBox="0 0 100 100"><circle class="trk" cx="50" cy="50" r="44"/><circle id="rArc" class="arc" cx="50" cy="50" r="44"/></svg><b id="rScore"></b></div>
       <div><h3 id="rGrade"></h3><small id="rSub"></small></div>
     </div>
+    <div class="verdict" id="rVerdict" hidden></div>
     <div class="rgrid" id="rStats"></div>
     <div class="evs" id="rEvents"></div>
     <p class="note" data-t="rep_note"></p>
@@ -765,8 +793,8 @@ body.riding .sicon{color:var(--green)}
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate.js"></script>
-<script src="data.js?v=14"></script>
-<script src="app.js?v=14"></script>
-<script src="theory.js?v=14"></script>
+<script src="data.js?v=16"></script>
+<script src="app.js?v=16"></script>
+<script src="theory.js?v=16"></script>
 </body>
 </html>

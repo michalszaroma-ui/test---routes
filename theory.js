@@ -284,12 +284,12 @@ const TX2 = {
     g:{all:"All", reg:"Regulatory", warn:"Warning", rw:"Roadworks", info:"Information", mw:"Motorway"}, search:"Search signs", driver:"Your hand signals (driver)", pointsman:"Signals to a Garda on point duty", garda:"Signals given by a Garda or warden", light:"Traffic lights", mark:"Road markings",
     note:"Before the drive the tester shows you road signs and asks what they mean, asks a few Rules of the Road questions, and asks you to show hand signals. Answer like the “Say to the tester” line under each sign: what type of sign it is, its name, and what you do. Shapes help: red circles forbid, blue circles order, yellow diamonds warn, orange is roadworks, rectangles inform.",
     limits:"Default speed limits: motorways 120 km/h · national roads 100 (many national secondary roads now 80 where signed) · regional roads 80 · rural local roads 60 (since Feb 2025) · towns 50 · many urban streets 30. Signs always win.",
-    q:"What does this sign mean?", qs:"What does this signal mean?", score:"{a} of {b} right", next:"Next", again:"New quiz", missed:"Practise the ones you missed", none:"All correct, nice!", known:"{n} of {t} answered right at least once", src:"Sign pictures: Wikimedia Commons where available; meanings follow the RSA Rules of the Road. Signals from the Road Traffic (Traffic and Parking) Regulations.", modeSigns:"Signs", modeSignals:"Signals & lines", modeMixed:"Everything", close:"Close", sayIt:"Say to the tester", modeCards:"Flashcards", fcAsk:"Name it out loud, then check.", fcShow:"Show answer", fcYes:"I knew it", fcNo:"Didn't know"},
+    q:"What does this sign mean?", qs:"What does this signal mean?", score:"{a} of {b} right", next:"Next", again:"New quiz", missed:"Practise the ones you missed", none:"All correct, nice!", known:"{n} of {t} answered right at least once", src:"Sign pictures: Wikimedia Commons where available; meanings follow the RSA Rules of the Road. Signals from the Road Traffic (Traffic and Parking) Regulations.", modeSigns:"Signs", modeSignals:"Signals & lines", modeMixed:"Everything", close:"Close", sayIt:"Say to the tester", allCats:"All categories", practiseCat:"Flashcards for these", notYet:"not learnt yet", allSigns:"All signs", modeCards:"Flashcards", fcAsk:"Name it out loud, then check.", fcShow:"Show answer", fcYes:"I knew it", fcNo:"Didn't know"},
   pl:{title:"Przygotowanie do pytań", kicker:"Znaki, sygnały i światła", open:"Znaki i sygnały", openSub:"Wszystkie znaki drogowe, sygnały ręczne, sygnały Gardy, światła i oznakowanie poziome, z quizem", tabs:["Znaki","Sygnały ręczne","Światła i linie","Quiz"],
     g:{all:"Wszystkie", reg:"Nakazy i zakazy", warn:"Ostrzegawcze", rw:"Roboty drogowe", info:"Informacyjne", mw:"Autostrada"}, search:"Szukaj znaku", driver:"Twoje sygnały ręczne (kierowca)", pointsman:"Sygnały do policjanta kierującego ruchem", garda:"Sygnały policjanta (Garda) lub opiekuna", light:"Sygnalizacja świetlna", mark:"Oznakowanie poziome",
     note:"Przed jazdą egzaminator zadaje kilka pytań z przepisów (Rules of the Road), pokazuje znaki do nazwania i prosi o pokazanie sygnałów ręcznych. Egzamin jest po angielsku, więc pod każdym znakiem jest też jego angielska nazwa. Kształt i kolor: koła nakazują lub zakazują, żółte romby ostrzegają, pomarańczowe to roboty, prostokąty informują.",
     limits:"Domyślne limity: autostrady 120 km/h · drogi krajowe 100 (wiele drugorzędnych krajowych teraz 80, jeśli oznakowano) · regionalne 80 · wiejskie drogi lokalne 60 (od lutego 2025) · miasta 50 · wiele ulic 30. Znaki zawsze mają pierwszeństwo.",
-    q:"Co oznacza ten znak?", qs:"Co oznacza ten sygnał?", score:"{a} z {b} dobrze", next:"Dalej", again:"Nowy quiz", missed:"Powtórz błędne", none:"Wszystko dobrze, brawo!", known:"{n} z {t} odpowiedzianych dobrze przynajmniej raz", src:"Obrazki znaków: Wikimedia Commons, gdy dostępne; znaczenia według RSA Rules of the Road. Sygnały według Road Traffic (Traffic and Parking) Regulations.", modeSigns:"Znaki", modeSignals:"Sygnały i linie", modeMixed:"Wszystko", close:"Zamknij", sayIt:"Powiedz egzaminatorowi (po angielsku)", modeCards:"Fiszki", fcAsk:"Nazwij znak na głos po angielsku, potem sprawdź.", fcShow:"Pokaż odpowiedź", fcYes:"Wiedziałem", fcNo:"Nie wiedziałem"},
+    q:"Co oznacza ten znak?", qs:"Co oznacza ten sygnał?", score:"{a} z {b} dobrze", next:"Dalej", again:"Nowy quiz", missed:"Powtórz błędne", none:"Wszystko dobrze, brawo!", known:"{n} z {t} odpowiedzianych dobrze przynajmniej raz", src:"Obrazki znaków: Wikimedia Commons, gdy dostępne; znaczenia według RSA Rules of the Road. Sygnały według Road Traffic (Traffic and Parking) Regulations.", modeSigns:"Znaki", modeSignals:"Sygnały i linie", modeMixed:"Wszystko", close:"Zamknij", sayIt:"Powiedz egzaminatorowi (po angielsku)", allCats:"Wszystkie kategorie", practiseCat:"Fiszki z tej kategorii", notYet:"jeszcze nie", allSigns:"Wszystkie znaki", modeCards:"Fiszki", fcAsk:"Nazwij znak na głos po angielsku, potem sprawdź.", fcShow:"Pokaż odpowiedź", fcYes:"Wiedziałem", fcNo:"Nie wiedziałem"},
 };
 const tt = k => (TX2[lang]||TX2.en)[k] ?? TX2.en[k];
 const fill = (s, v) => s.replace(/\{(\w+)\}/g, (m,k) => v[k]);
@@ -301,6 +301,29 @@ const ITEMS = [
   ...LM.map(r => ({id:r[0], g:r[1], svg:r[2], en:r[3], ex:r[4], pl:r[5], px:r[6], kind:"line"})),
 ];
 const BYID = Object.fromEntries(ITEMS.map(x => [x.id, x]));
+// Smaller categories inside each group: [key, group, English, Polish, sign ids]
+const CATS = [
+  ["stopgive","reg","Stop & give way","Stop i pierwszeństwo","stop yield warden go stoppaddle"],
+  ["noturn","reg","No entry, turns & overtaking","Zakazy wjazdu, skrętu i wyprzedzania","noentry noright noleft nouturn noovertake novehicles turnback"],
+  ["speed","reg","Speed limits","Ograniczenia prędkości","sl30 sl50 sl60 sl80 sl100 sl120 rural"],
+  ["blue","reg","Must do (blue circles)","Nakazy (niebieskie koła)","keepleft keepright eitherside ahead turnleft turnright leftahead rightahead minirb"],
+  ["parking","reg","Parking & stopping","Parkowanie i zatrzymywanie","nopark clearway parkok discpark taxi"],
+  ["lanes","reg","Bus, tram, bike & pedestrian","Autobusy, tramwaje, rowery i piesi","buslaneL contrabus busonly tramlane cycletrack cyclesonly shared pedstreet nopeds nocycles nohorses nocarts"],
+  ["size","reg","Height, width & weight limits","Ograniczenia wysokości, szerokości i masy","height width length weight axle axles"],
+  ["junctions","warn","Junctions & roundabouts","Skrzyżowania i ronda","xroads sideL sideR tjunc yjunc stagger twojunc xroadsEq majorahead dualT dualX stopahead yieldahead rbahead minirbahead merge mergediv"],
+  ["bends","warn","Bends & road layout","Zakręty i układ drogi","corner bend bends corners chevron narrowboth narrowL narrowR twoway dualends crossover passlane lanelost"],
+  ["crossings","warn","Lights, crossings, rail & tram","Światła, przejścia, kolej i tramwaj","lights peds school children schoolx lcgates lcnogates tramx"],
+  ["animals","warn","Animals, cyclists & farm vehicles","Zwierzęta, rowerzyści i maszyny rolnicze","cyclists slipcycle horses cattle sheep deer tractors"],
+  ["surface","warn","Road surface & hills","Nawierzchnia i wzniesienia","slippery descent ascent dip bumps humpback rocks"],
+  ["hazards","warn","Tunnels, low bridges & other hazards","Tunele, niskie mosty i inne zagrożenia","tunnel headroom lowbridge cables quay crosswind aircraft queues driveleft"],
+  ["rwhaz","rw","Roadworks hazards","Zagrożenia przy robotach","rwahead rwnarrowL rwnarrowR rwnarrowB rwtwoway rwsingle rwsignals flagman chippings rwslippery rwhump rwuneven rwpedsL rwsiteL rwcables rwqueues keep15"],
+  ["rwlanes","rw","Lane closures, detours & barriers","Zamknięte pasy, objazdy i bariery","closeNS2 closeOS2 closeOS3 rwclosed detour enddetour hardshoulder slow barrier"],
+  ["direction","info","Direction signs & colours","Drogowskazy i ich kolory","motorwaydir nationaldir regionaldir town tourist"],
+  ["services","info","Services & information","Usługi i informacje","hospital culdesac layby disabled camera slchange calming ramps sos"],
+  ["motorway","mw","Motorway","Autostrada","mwstart mwend count3 toll garda"],
+].map(([k,g,en,pl,ids]) => ({k, g, en, pl, ids:ids.split(" ")}));
+const catOf = {}; CATS.forEach(c => c.ids.forEach(id => { catOf[id] = c.k; }));
+const catName = c => lang==="pl" ? c.pl : c.en;
 const nm = x => lang==="pl" ? x.pl : x.en, expl = x => lang==="pl" ? x.px : x.ex;
 const svgOf = (x, cls="") => `<svg class="${cls}" viewBox="${x.kind==="signal" && x.g!=="garda" ? "0 0 104 100" : "0 0 100 100"}" aria-hidden="true">${x.svg}</svg>`;
 const official = code => `https://commons.wikimedia.org/wiki/Special:FilePath/IE_road_sign_${code}.svg?width=180`;
@@ -345,7 +368,7 @@ let known = store.get("ttr-th-known", {}), miss = store.get("ttr-th-miss", {});
 const saveProg = () => { store.set("ttr-th-known", known); store.set("ttr-th-miss", miss); };
 
 // ---------- overlay ----------
-let ttab = 0, tgroup = "all", tq = "", quiz = null, qmode = "cards";
+let ttab = 0, tgroup = "all", tq = "", quiz = null, qmode = "cards", tcat = "";
 function card(x){
   return `<div class="tcard${known[x.id] ? " ok" : ""}">${pic(x)}<div class="tmeta"><b>${esc(nm(x))}</b>${lang==="pl" ? `<i>${esc(x.en)}</i>` : ""}<small>${esc(expl(x))}</small>${sayBox(x)}</div></div>`;
 }
@@ -356,14 +379,26 @@ function renderTheory(){
   let h = "";
   if(ttab===0){
     const groups = ["all","reg","warn","rw","info","mw"];
-    h += `<p class="note">${esc(tt("note"))}</p><p class="tlim">${esc(tt("limits"))}</p>`;
+    if(!tcat && !tq.trim()) h += `<p class="note">${esc(tt("note"))}</p><p class="tlim">${esc(tt("limits"))}</p>`;
     h += `<input class="tsearch" id="thSearch" type="search" placeholder="${esc(tt("search"))}" value="${esc(tq)}">`;
     h += `<div class="tchips">${groups.map(g => `<button type="button" data-tg="${g}" aria-pressed="${g===tgroup}">${esc(tt("g")[g])}</button>`).join("")}</div>`;
     const q = tq.trim().toLowerCase();
-    const list = ITEMS.filter(x => x.kind==="sign" && (tgroup==="all" || x.g===tgroup) && (!q || (x.en+" "+x.pl+" "+x.ex+" "+x.px).toLowerCase().includes(q)));
-    for(const g of groups.slice(1)){
-      const part = list.filter(x => x.g===g); if(!part.length) continue;
-      h += `<div class="tsub">${esc(tt("g")[g])} · ${part.length}</div><div class="tgrid">${part.map(card).join("")}</div>`;
+    if(q){                                                      // searching: one flat list
+      const list = ITEMS.filter(x => x.kind==="sign" && (tgroup==="all" || x.g===tgroup) && (x.en+" "+x.pl+" "+x.ex+" "+x.px).toLowerCase().includes(q));
+      h += `<div class="tsub">${list.length}</div><div class="tgrid">${list.map(card).join("")}</div>`;
+    } else if(tcat){                                            // one category open
+      const c = CATS.find(c => c.k===tcat), list = c.ids.map(id => BYID[id]).filter(Boolean), kn = list.filter(x => known[x.id]).length;
+      h += `<div class="catbar"><button type="button" class="catback" data-tcat="">‹ ${esc(tt("allCats"))}</button><button type="button" class="btn ghost small" data-catcards="${c.k}">${esc(tt("practiseCat"))}</button></div>`;
+      h += `<div class="tsub">${esc(tt("g")[c.g])} › ${esc(catName(c))} · ${kn}/${list.length}</div><div class="tgrid">${list.map(card).join("")}</div>`;
+    } else {                                                    // category tiles
+      for(const g of groups.slice(1)){
+        if(tgroup!=="all" && g!==tgroup) continue;
+        const cs = CATS.filter(c => c.g===g);
+        h += `<div class="tsub">${esc(tt("g")[g])} · ${cs.reduce((a,c) => a+c.ids.length, 0)}</div><div class="cattiles">`;
+        h += cs.map(c => { const kn = c.ids.filter(id => known[id]).length;
+          return `<button type="button" class="cattile g-${g}" data-tcat="${c.k}"><span class="catpics">${c.ids.slice(0,3).map(id => `<svg viewBox="0 0 100 100">${BYID[id].svg}</svg>`).join("")}</span><b>${esc(catName(c))}</b><small>${c.ids.length} · ${kn ? `✓ ${kn}` : esc(tt("notYet"))}</small><i style="width:${Math.round(100*kn/c.ids.length)}%"></i></button>`; }).join("");
+        h += `</div>`;
+      }
     }
     const tot = ITEMS.length, kn = ITEMS.filter(x => known[x.id]).length;
     h += `<p class="note">${esc(fill(tt("known"), {n:kn, t:tot}))}</p><p class="note">${esc(tt("src"))}</p>`;
@@ -392,12 +427,17 @@ function makeOpts(x){
   return shuffle([x, ...pick]);
 }
 let fc = null;
-function newCards(){ const fresh=shuffle(ITEMS.filter(x => !known[x.id])), rest=shuffle(ITEMS.filter(x => known[x.id])); fc = {list:[...fresh, ...rest].slice(0,20), i:0, shown:false, ok:0, bad:[]}; }
+function newCards(cat){
+  const pool = cat ? CATS.find(c => c.k===cat).ids.map(id => BYID[id]) : ITEMS;
+  const fresh=shuffle(pool.filter(x => !known[x.id])), rest=shuffle(pool.filter(x => known[x.id]));
+  fc = {list:[...fresh, ...rest].slice(0,20), i:0, shown:false, ok:0, bad:[], cat};
+}
 function cardsHtml(){
   if(!fc) newCards();
-  if(fc.i >= fc.list.length) return `<div class="qdone"><b>${esc(fill(tt("score"), {a:fc.ok, b:fc.list.length}))}</b>${fc.bad.map(id => card(BYID[id])).join("")}</div><div class="qbtns"><button class="btn primary" type="button" data-fc="new">${esc(tt("again"))}</button></div>`;
+  const catLine = fc.cat ? `<div class="tsub">${esc(catName(CATS.find(c => c.k===fc.cat)))}</div>` : "";
+  if(fc.i >= fc.list.length) return catLine + `<div class="qdone"><b>${esc(fill(tt("score"), {a:fc.ok, b:fc.list.length}))}</b>${fc.bad.map(id => card(BYID[id])).join("")}</div><div class="qbtns"><button class="btn primary" type="button" data-fc="new">${esc(tt("again"))}</button>${fc.cat ? `<button class="btn ghost" type="button" data-fc="all">${esc(tt("allSigns"))}</button>` : ""}</div>`;
   const x = fc.list[fc.i];
-  let h = `<div class="qhead"><span>${fc.i+1} / ${fc.list.length}</span><span>${esc(fill(tt("score"), {a:fc.ok, b:fc.i}))}</span></div><div class="qpic">${pic(x)}</div>`;
+  let h = catLine + `<div class="qhead"><span>${fc.i+1} / ${fc.list.length}</span><span>${esc(fill(tt("score"), {a:fc.ok, b:fc.i}))}</span></div><div class="qpic">${pic(x)}</div>`;
   if(!fc.shown) return h + `<p class="qq">${esc(tt("fcAsk"))}</p><div class="qbtns"><button class="btn primary" type="button" data-fc="show">${esc(tt("fcShow"))}</button></div>`;
   return h + `<p class="qq">${esc(nm(x))}${lang==="pl" ? ` <i class="qen">${esc(x.en)}</i>` : ""}</p>${lang==="pl" ? `<p class="qex">${esc(x.px)}</p>` : ""}${sayBox(x)}
     <div class="qbtns"><button class="btn ghost" type="button" data-fc="bad">${esc(tt("fcNo"))}</button><button class="btn primary" type="button" data-fc="ok">${esc(tt("fcYes"))}</button></div>`;
@@ -434,18 +474,21 @@ function answer(i){
 function openTheory(t){ if(t!=null) ttab=t; $("theory").hidden=false; renderTheory(); $("thBody").scrollTop=0; }
 window.openTheory = openTheory; window.renderTheory = renderTheory;
 document.addEventListener("click", e => {
-  const el = e.target.closest("[data-tt],[data-tg],[data-qo],[data-qa],[data-qm],[data-topen],[data-say],[data-fc]"); if(!el) return;
+  const el = e.target.closest("[data-tt],[data-tg],[data-qo],[data-qa],[data-qm],[data-topen],[data-say],[data-fc],[data-tcat],[data-catcards]"); if(!el) return;
+  if(el.dataset.tcat!=null){ tcat = el.dataset.tcat; renderTheory(); $("thBody").scrollTop=0; return; }
+  if(el.dataset.catcards){ newCards(el.dataset.catcards); qmode="cards"; ttab=3; renderTheory(); $("thBody").scrollTop=0; return; }
   if(el.dataset.say){ const x=BYID[el.dataset.say]; if(x) speakEn(sayAnswer(x)); return; }
   if(el.dataset.fc){
     const a=el.dataset.fc;
-    if(a==="new") newCards();
+    if(a==="new") newCards(fc.cat);
+    else if(a==="all") newCards();
     else if(a==="show") fc.shown=true;
     else { const x=fc.list[fc.i]; if(a==="ok"){ fc.ok++; known[x.id]=1; delete miss[x.id]; } else { fc.bad.push(x.id); miss[x.id]=1; } saveProg(); fc.i++; fc.shown=false; }
     renderTheory(); $("thBody").scrollTop=0; return;
   }
   if(el.dataset.topen!=null) return openTheory(+el.dataset.topen);
   if(el.dataset.tt!=null){ ttab=+el.dataset.tt; renderTheory(); $("thBody").scrollTop=0; }
-  else if(el.dataset.tg){ tgroup=el.dataset.tg; renderTheory(); }
+  else if(el.dataset.tg){ tgroup=el.dataset.tg; tcat=""; renderTheory(); }
   else if(el.dataset.qo!=null) answer(+el.dataset.qo);
   else if(el.dataset.qm){ qmode = el.dataset.qm; if(qmode!=="cards") newQuiz(qmode); renderTheory(); }
   else if(el.dataset.qa==="next"){ quiz.i++; quiz.picked=null; if(quiz.i < quiz.list.length) quiz.opts = makeOpts(quiz.list[quiz.i]); renderTheory(); $("thBody").scrollTop=0; }
@@ -460,5 +503,5 @@ function renderEntry(){
 }
 window.renderTheoryEntry = () => { renderEntry(); if(!$("theory").hidden) renderTheory(); };
 renderEntry();
-window.__theory = {ITEMS, S, SIG, GSIG, LM};
+window.__theory = {ITEMS, S, SIG, GSIG, LM, CATS, catOf};
 })();
