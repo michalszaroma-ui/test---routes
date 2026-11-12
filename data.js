@@ -4,26 +4,55 @@
 // =====================================================================
 const TC = [53.2962914, -6.3621064];
 const ROUTES = [
-  {id:1, name:"Greenhills Rd & Tymon North", pl:"Greenhills Rd i Tymon North", color:"#38e1ff", stops:[
+  {id:1, centre:"tallaght", name:"Greenhills Rd & Tymon North", pl:"Greenhills Rd i Tymon North", color:"#38e1ff", stops:[
     [53.2962975,-6.3620751,"RSA Test Centre"],[53.2950963,-6.3523194,"Hibernian Ind Est, Greenhills Rd"],[53.2903565,-6.3515160,"Bancroft Ave"],
     [53.2972338,-6.3417816,"St Aongus' Cres"],[53.2969748,-6.3433914,"St Aongus' Rd"],[53.2951132,-6.3457197,"Tymon North Rd"],
     [53.2989723,-6.3493368,"Tymonville Park"],[53.3006600,-6.3534107,"Parkview, Greenhills Rd"],[53.2962975,-6.3620751,"RSA Test Centre"]]},
-  {id:2, name:"Tymon estates & Main Road", pl:"Osiedla Tymon i Main Road", color:"#ff7ab8", stops:[
+  {id:2, centre:"tallaght", name:"Tymon estates & Main Road", pl:"Osiedla Tymon i Main Road", color:"#ff7ab8", stops:[
     [...TC,"RSA Test Centre"],[53.2989723,-6.3493368,"Tymonville Park"],[53.2946087,-6.3454121,"Tymon North Park"],
     [53.2972194,-6.3469721,"Tymon North Rd"],[53.2953516,-6.3439535,"St Aongus' Rd"],[53.2958033,-6.3435479,"St Aongus' Park"],
     [53.2896580,-6.3399669,"Main Road"],[53.2888789,-6.3443861,"Glenview Park"],[...TC,"RSA Test Centre"]]},
-  {id:3, name:"Redwood & Second Ave", pl:"Redwood i Second Ave", color:"#a48cff", stops:[
+  {id:3, centre:"tallaght", name:"Redwood & Second Ave", pl:"Redwood i Second Ave", color:"#a48cff", stops:[
     [...TC,"RSA Test Centre"],[53.2982496,-6.3547223,"Stop 1"],[53.2980642,-6.3626553,"Redwood View"],[53.2988604,-6.3694194,"Redwood Ct"],
     [53.2997926,-6.3744818,"Stop 4"],[53.2945415,-6.3803403,"Second Ave"],[53.2917570,-6.3686899,"Stop 6"],[...TC,"RSA Test Centre"]]},
-  {id:4, name:"Cookstown Way loop", pl:"Pętla Cookstown Way", color:"#33e3a1", stops:[
+  {id:4, centre:"tallaght", name:"Cookstown Way loop", pl:"Pętla Cookstown Way", color:"#33e3a1", stops:[
     [...TC,"RSA Test Centre"],[53.2889488,-6.3681593,"Stop 1"],[53.2904208,-6.3803343,"Cookstown Way"],[53.2962333,-6.3753246,"Stop 3"],
     [53.3002944,-6.3735810,"Stop 4"],[53.2993537,-6.3667449,"Stop 5"],[53.2995039,-6.3669914,"Stop 6"],[53.3002374,-6.3637838,"Stop 7"],
     [53.2965188,-6.3619808,"RSA Test Centre"]]},
-  {id:5, name:"Northern loop", pl:"Pętla północna", color:"#ffb547", stops:[
+  {id:5, centre:"tallaght", name:"Northern loop", pl:"Pętla północna", color:"#ffb547", stops:[
     [53.2962975,-6.3620751,"RSA Test Centre"],[53.3013517,-6.3544097,"Stop 1"],[53.3030459,-6.3549189,"Stop 2"],[53.3022714,-6.3661250,"Stop 3"],
     [53.2984777,-6.3667088,"Stop 4"],[53.3005485,-6.3533227,"Stop 5"],[53.3000198,-6.3500441,"Stop 6"],[53.2977601,-6.3472784,"Stop 7"],
     [53.2993215,-6.3459759,"Stop 8"],[53.2976557,-6.3609269,"Broomhill Rd (finish)"]]},
+
+  // ----- Routes described by driving schools, built on the phone from OpenStreetMap -----
+  // Steps: "Street" = drive onto that street; {in, mv} = turn into a street for a manoeuvre and come back out;
+  // {mv:"turn"} = turnabout on the current street; {hill:1} = hill start on the current street. "A|B" = either name.
+  {id:6, centre:"tallaght", name:"Bancroft, St Aongus & Tymonville", pl:"Bancroft, St Aongus i Tymonville", color:"#5ad1ff", src:"Pinnacle Driving School · route 1", srcUrl:"https://www.pinnacledrivingschool.ie/driving-test-routes/", stops:[],
+   recipe:["Broomhill Road","Greenhills Road","Main Road","Bancroft Road",{in:"Bancroft Park",mv:"rev"},"Main Road","Castletymon Road","Saint Aongus Road",{in:"Saint Aongus Crescent",mv:"turn"},{hill:1},"Tymon North Avenue","Tymonville Park","Tymonville Road","Castletymon Road","Greenhills Road","Broomhill Road"]},
+  {id:7, centre:"tallaght", name:"Tymon North Park & Glenview", pl:"Tymon North Park i Glenview", color:"#ff9ad0", src:"Pinnacle Driving School · route 2", srcUrl:"https://www.pinnacledrivingschool.ie/driving-test-routes/", stops:[],
+   recipe:["Broomhill Road","Greenhills Road","Castletymon Road","Tymonville Road","Tymonville Avenue","Tymonville Park",{hill:1},"Tymon North Avenue","Tymon North Road",{in:"Tymon North Park",mv:"turn"},"Saint Aongus Road",{in:"Saint Aongus Park",mv:"rev"},"Castletymon Road","Main Road","Glenview Park","Main Road","Greenhills Road","Broomhill Road"]},
+  {id:8, centre:"tallaght", name:"Redwood, Parkhill & Cookstown", pl:"Redwood, Parkhill i Cookstown", color:"#b9a6ff", src:"Pinnacle Driving School · route 3", srcUrl:"https://www.pinnacledrivingschool.ie/driving-test-routes/", stops:[],
+   recipe:["Broomhill Road","Greenhills Road","Mayberry Road","Treepark Road","Redwood Rise",{hill:1},"Redwood Park","Redwood Avenue",{in:"Redwood View",mv:"turn"},"Redwood Lawns|Redwood Lawn","Redwood Drive","Parkhill Road",{in:"Redwood Court",mv:"rev"},"Mayberry Road","Belgard Road","Old Belgard Road","Cookstown Road","Second Avenue","Cookstown Way","Belgard Square North","Belgard Road","Airton Road","Broomhill Road"]},
+  {id:9, centre:"tallaght", name:"Cookstown loop & Redwood estate", pl:"Pętla Cookstown i osiedle Redwood", color:"#5eeab5", src:"Pinnacle Driving School · route 4", srcUrl:"https://www.pinnacledrivingschool.ie/driving-test-routes/", stops:[],
+   recipe:["Broomhill Road","Airton Road","Belgard Road","Old Blessington Road|Blessington Road","Belgard Square East","Belgard Square North","Cookstown Way","Second Avenue","Cookstown Road","Old Belgard Road","Belgard Road","Mayberry Road","Parkhill Road","Redwood Drive",{in:"Redwood Way",mv:"rev"},"Redwood Lawns|Redwood Lawn","Redwood Avenue","Redwood Park",{mv:"turn"},"Redwood Rise","Treepark Road",{hill:1},"Mayberry Road","Greenhills Road","Broomhill Road"]},
+  {id:10, centre:"tallaght", name:"Belgard Heights & Fettercairn", pl:"Belgard Heights i Fettercairn", color:"#ffc56e", src:"ADI Driving School · Tallaght route 3", srcUrl:"https://adidriving.ie/driving-test-routes/", stops:[],
+   recipe:["Broomhill Road","Greenhills Road","Airton Road","Belgard Road","Belgard Square North","Cookstown Way","Maplewood Road","Cookstown Road","Fettercairn Road","Katherine Tynan Road","Cookstown Road","Belgard Heights","The Oaks","The Rise","The Meadow",{mv:"turn"},{hill:1},"The Heath",{in:"The Glade|The Oaks",mv:"rev"},"The View","Old Belgard Road","Belgard Road","Mayberry Road","Greenhills Road","Broomhill Road"]},
+  {id:11, centre:"finglas", name:"Grove Park & Willow Park", pl:"Grove Park i Willow Park", color:"#38e1ff", src:"Pinnacle Driving School · Finglas route A", srcUrl:"https://www.pinnacledrivingschool.ie/driving-test-routes/", stops:[],
+   recipe:["Jamestown Road","Clancy Avenue|Clancey Avenue","McKee Road","Finglas Park","Ballygall Avenue","Ballygall Road West|Glasnevin Avenue","Willow Park Road","Grove Park Avenue",{in:"Grove Park Crescent",mv:"rev"},"Glasnevin Avenue","Willow Park Avenue","Willow Park Road",{mv:"turn"},"Willow Park Grove","Pinewood Avenue","Willow Park Road",{hill:1},"Cedarwood Rise|Cederwood Rise","Willow Park Crescent","Grove Park Road","Glasnevin Avenue","Clune Road","Jamestown Road"]},
+  {id:12, centre:"finglas", name:"Grove Wood, Tolka Estate & Finglas village", pl:"Grove Wood, Tolka Estate i Finglas", color:"#ff7ab8", src:"Pinnacle Driving School · Finglas route B", srcUrl:"https://www.pinnacledrivingschool.ie/driving-test-routes/", stops:[],
+   recipe:["Jamestown Road","Sycamore Road","McKee Road","Finglas Park",{in:"Grove Avenue",mv:"rev"},{in:"Grove Wood",mv:"turn"},"Ballygall Avenue","Ballygall Road West|Glasnevin Avenue","Grove Park Road","Grove Park Avenue","Willow Park Road","Beneavin Drive","Glasilawn Road","Glasilawn Avenue","Glasmeen Road","Tolka Estate Road|Tolka Estate","Griffith Avenue Extension|Griffith Avenue","Ballygall Road East","Old Finglas Road","Finglas Road","Jamestown Road"]},
+  {id:13, centre:"finglas", name:"Cedarwood, Ferndale & Beneavin", pl:"Cedarwood, Ferndale i Beneavin", color:"#a48cff", src:"Pinnacle Driving School · Finglas route C", srcUrl:"https://www.pinnacledrivingschool.ie/driving-test-routes/", stops:[],
+   recipe:["Jamestown Road","Clancy Avenue|Clancey Avenue","McKee Road",{hill:1},"Sycamore Road","Cedarwood Road",{in:"Cedarwood Park",mv:"rev"},{in:"Cedarwood Avenue",mv:"turn"},"Oakwood Park","Sycamore Road","Clancy Road","Clancy Avenue|Clancey Avenue","Jamestown Road","Seamus Ennis Road","Beneavin Drive","Beneavin Road","Ferndale Road","Ferndale Avenue","Ballygall Road East","Glasnevin Avenue","Willow Park Avenue","Willow Park Road","Beneavin Drive","Beneavin Road","Ballygall Road West|Glasnevin Avenue","Grove Road","Sycamore Road","Jamestown Road"]},
+  {id:14, centre:"raheny", name:"Clontarf, Mount Prospect & Chelsea Gardens", pl:"Clontarf, Mount Prospect i Chelsea Gardens", color:"#33e3a1", src:"ADI Driving School · Raheny route 1", srcUrl:"https://adidriving.ie/driving-test-routes/", stops:[],
+   recipe:["All Saints Park","All Saints Drive","Watermill Road","Clontarf Road|James Larkin Road","Mount Prospect Avenue",{hill:1},{in:"Baymount Park",mv:"rev"},"Mount Prospect Drive","Mount Prospect Park","Mount Prospect Avenue","Seapark Road","Conquer Hill Road",{in:"Chelsea Gardens",mv:"turn"},"Kincora Road","Vernon Avenue","Howth Road","All Saints Road","All Saints Park"]},
 ];
+
+// Test centres. bbox = s,w,n,e area the routes stay in; start = where the test begins.
+const CENTRES = {
+  tallaght:{name:"Tallaght", addr:"Premier Business Park, Broomhill Rd", start:[53.2962975,-6.3620751], bbox:[53.278,-6.392,53.312,-6.330]},
+  finglas:{name:"Finglas", addr:"Jamestown Business Park, Jamestown Rd", startName:"Jamestown Business Park", bbox:[53.366,-6.322,53.408,-6.262]},
+  raheny:{name:"Raheny", addr:"4 All Saints Park, Raheny", startStreet:"All Saints Park", bbox:[53.352,-6.235,53.392,-6.160]},
+};
 
 // Places worth a trip. Coordinates are the main car park / visitor centre (approximate).
 const EXPLORE = [
@@ -382,6 +411,9 @@ en:{
   rc_dry:"Dry for the next 3 hours. No rain gear needed.", rc_now:"Raining now on your route.", rc_dryFrom:"Should be dry from about {t}.", rc_noDry:"No dry spell in the next 3 hours: rain gear on.",
   rc_ride:"Rain expected around {t}, during your ride. Pack your rain gear.", rc_later:"Dry now. Rain from about {t}, so leave before then or take your rain gear.",
   rc_showers:"Mostly dry, but a {p}% chance of showers. Worth packing a jacket.", rc_fail:"Couldn't load the rain forecast. Check your signal.",
+  mv_hill:"Hill start", v_mv_hill:"Hill start here. Pull in on the left and stop. Then move off on the hill smoothly without rolling back: mirrors, signal, check your blind spot.", ex_mv_hill:"Pull in on the left and stop, please. When you're ready, move off.",
+  routesAt:"{c} test routes", centreKicker:"RSA {c} · {a}", mvShort:"manoeuvres", rcOnto:"onto {s}", rcIn_rev:"reverse around the corner into {s}", rcIn_turn:"turnabout in {s}", rcTurnHere:"turnabout on this road", rcHill:"hill start", rcSrc:"Route from {s}. Drawn automatically from OpenStreetMap, so it can differ slightly from the real route: follow the steps above.", rcMissing:"Couldn't find on the map: {s}", rcBuilding:"Building the route from the map…", rcFail:"Couldn't build this route right now. Check your signal and reopen the Test tab.", stepsN:v=>enN(v.n,"step","steps"),
+  v_introR:v=>`Route ${v.id}, ${v.n}.`,
   mv_turn:"Turnabout", mv_rev:"Reverse around corner", mv_none:"Not a manoeuvre", mv_remove:"Remove", mv_add:"Add a manoeuvre here", mv_title:"Manoeuvre",
   mv_turn_s:"Turn the car around using forward and reverse gears", mv_rev_s:"Reverse into the road on the left, close to the kerb",
   mv_tip:"Manoeuvres are found where the route turns back at a stop. Tap a purple marker on the map to change it, or long-press on the route to add one.",
@@ -409,6 +441,9 @@ pl:{
   practiceNote:"Próba odtwarza trasę w trzykrotnym tempie z manewrami, ograniczeniami prędkości i ostrzeżeniami, więc możesz się jej nauczyć w domu. Wszystko ustaw przed ruszeniem i zamocuj telefon. Ekran musi być włączony, a telefon podłączony do ładowania: GPS przestaje działać po zablokowaniu ekranu.",
   settings:"Ustawienia", language:"Język", map:"Mapa", dark:"Ciemna", light:"Jasna", sat:"Satelita", driving:"Jazda", alerts:"Ostrzeżenia",
   sl_t:"Pokazuj ograniczenia prędkości", sl_s:"Dane z TomTom i OpenStreetMap. Zwykle są poprawne, ale zawsze liczą się znaki na drodze.",
+  mv_hill:"Ruszanie na wzniesieniu", v_mv_hill:"Tutaj ruszanie na wzniesieniu. Zjedź do lewej i zatrzymaj się. Potem płynnie ruszaj pod górę, nie staczając się: lusterka, kierunkowskaz, martwe pole.", ex_mv_hill:"Proszę zjechać do lewej i się zatrzymać. Kiedy będzie pan gotowy, proszę ruszyć.",
+  routesAt:"Trasy egzaminacyjne {c}", centreKicker:"RSA {c} · {a}", mvShort:"manewry", rcOnto:"w {s}", rcIn_rev:"cofanie za róg w {s}", rcIn_turn:"zawracanie w {s}", rcTurnHere:"zawracanie na tej ulicy", rcHill:"ruszanie na wzniesieniu", rcSrc:"Trasa według: {s}. Narysowana automatycznie z OpenStreetMap, więc może się nieco różnić od prawdziwej: kieruj się powyższymi krokami.", rcMissing:"Nie znaleziono na mapie: {s}", rcBuilding:"Buduję trasę z mapy…", rcFail:"Nie udało się teraz zbudować trasy. Sprawdź zasięg i otwórz ponownie zakładkę Egzamin.", stepsN:v=>`${v.n} ${plN(v.n,"krok","kroki","kroków")}`,
+  v_introR:v=>`Trasa ${v.id}, ${v.n}.`,
   mv_turn:"Zawracanie", mv_rev:"Cofanie za róg", mv_none:"To nie manewr", mv_remove:"Usuń", mv_add:"Dodaj tu manewr", mv_title:"Manewr",
   mv_turn_s:"Zawróć samochód, używając biegu do przodu i wstecznego", mv_rev_s:"Wjedź tyłem w drogę po lewej, blisko krawężnika",
   mv_tip:"Manewry są wykrywane tam, gdzie trasa zawraca przy punkcie. Dotknij fioletowego znacznika na mapie, aby go zmienić, albo przytrzymaj palec na trasie, aby dodać nowy.",

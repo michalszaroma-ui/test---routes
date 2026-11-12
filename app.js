@@ -156,7 +156,7 @@ function describe(step, isFinal){
 function iconSvg(ins){
   if(!ins) return "";
   if(ins.icon==="rb") return `<svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="12.5" fill="none" stroke="currentColor" stroke-width="4.5"/><text x="24" y="30" text-anchor="middle" font-size="17" font-weight="700" font-family="Chakra Petch,sans-serif" fill="currentColor">${ins.exit||""}</text></svg>`;
-  if(ins.icon==="mv") return ico(ins.mvType==="rev" ? "reverse" : "uturn");
+  if(ins.icon==="mv") return ico(MV_IC[ins.mvType] || "uturn");
   if(ins.icon==="flag") return `<svg viewBox="0 0 48 48"><path d="M13 6v36" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path d="M15 8h21l-5 7 5 7H15z" fill="currentColor"/></svg>`;
   if(ins.icon==="warn") return `<svg viewBox="0 0 48 48"><path d="M24 6 44 40H4z" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><path d="M24 18v10" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><circle cx="24" cy="34" r="2.5" fill="currentColor"/></svg>`;
   return `<svg viewBox="0 0 48 48" style="transform:rotate(${ins.deg||0}deg)"><path d="M24 4 39 21H29v23H19V21H9z" fill="currentColor"/></svg>`;
@@ -491,6 +491,7 @@ function drawRoute(route, fit=true){
   else route.stops.forEach((s,i) => {
     const first=i===0, last=i===route.stops.length-1;
     if(last && Math.hypot(s[0]-route.stops[0][0], s[1]-route.stops[0][1]) < 0.0004){ stopMarkers.push(null); return; }
+    if(route.recipe && !first && !last){ stopMarkers.push(null); return; }
     const label = first ? "START" : last ? "END" : String(i);
     const icon = L.divIcon({className:"", iconSize:[30,30], iconAnchor:[15,15], html:`<div class="stopmk ${first||last?"home":""}" style="--c:${route.color}">${label}</div>`});
     stopMarkers.push(L.marker([s[0],s[1]], {icon, keyboard:false}).bindPopup(esc(stopLabel(s[2]))).addTo(markLayer));
@@ -1392,6 +1393,97 @@ function intelChips(r){
 }
 
 // =====================================================================
+// Routes written as street lists (from driving schools): built on the phone from OpenStreetMap
+// =====================================================================
+// Each pair of streets in a row meets at a junction; the route is drawn through those junctions in order.
+const RCP_V = "ttr-rcp-v1-";
+const GENERIC = new Set(["road","rd","avenue","ave","park","drive","way","the","st","saint","lawn","lawns","rise","view","court","crescent","grove","close","green","square","east","west","north","south","upper","lower","estate","extension","old","new","lane","place","street"]);
+function normName(x){
+  return String(x||"").toLowerCase().replace(/[’'.]/g,"").replace(/\bsaint\b/g,"st").replace(/aengus/g,"aongus").replace(/clancey/g,"clancy").replace(/cederwood/g,"cedarwood")
+    .replace(/\broad\b/g,"rd").replace(/\bavenue\b/g,"ave").replace(/\s+/g," ").trim();
+}
+const nameEq = (a, b) => { a=normName(a); b=normName(b); return a===b || a.replace(/s$/,"")===b.replace(/s$/,""); };
+const keyWord = n => { const w=normName(n).split(" ").filter(x => x.length>2 && !GENERIC.has(x)); return (w.sort((a,b) => b.length-a.length)[0]) || normName(n).split(" ").filter(x => x!=="the")[0]; };
+const rcpNames = r => r.recipe.flatMap(it => typeof it==="string" ? it.split("|") : it.in ? it.in.split("|") : []);
+const centreMaps = {};
+async function centreStreets(cid){
+  if(centreMaps[cid]) return centreMaps[cid];
+  const C = CENTRES[cid], names = new Set();
+  ROUTES.filter(r => r.centre===cid && r.recipe).forEach(r => rcpNames(r).forEach(n => names.add(n)));
+  if(C.startStreet) names.add(C.startStreet);
+  const words = [...new Set([...names].map(keyWord).filter(Boolean))].map(w => w.replace(/[^a-z0-9 ]/g,""));
+  const bb = C.bbox.join(","), place = C.startName ? `nwr["name"~"${C.startName}",i](${bb});` : "";
+  const j = await overpass(`[out:json][timeout:30];(way["highway"]["name"~"(${words.join("|")})",i](${bb});${place});out geom;`, null, 30000);
+  const o = mkO((C.bbox[0]+C.bbox[2])/2, (C.bbox[1]+C.bbox[3])/2), ways=[]; let startPt=null;
+  for(const e of j.elements||[]){
+    const g = e.geometry || []; if(!g.length) continue;
+    if(e.tags && e.tags.highway) ways.push({name:e.tags.name, pts:g.map(q => ({lat:q.lat, lon:q.lon, ...pxy(o,q.lat,q.lon)}))});
+    else if(C.startName && e.tags && new RegExp(C.startName,"i").test(e.tags.name||"")){ const la=g.reduce((a,q)=>a+q.lat,0)/g.length, lo=g.reduce((a,q)=>a+q.lon,0)/g.length; startPt={lat:la, lon:lo, ...pxy(o,la,lo)}; }
+  }
+  return centreMaps[cid] = {o, ways, startPt};
+}
+function streetPolys(M, want){
+  for(const alt of String(want).split("|")){ const ps = M.ways.filter(w => nameEq(w.name, alt)).map(w => w.pts); if(ps.length) return ps; }
+  return null;
+}
+const pd = (a,b) => Math.hypot(a.x-b.x, a.y-b.y);
+function nearestOnPolys(polys, p){ let best=null; for(const ps of polys) for(let i=0;i<ps.length-1;i++){ const r=segDist(p, ps[i], ps[i+1]), q={x:ps[i].x+(ps[i+1].x-ps[i].x)*r.tt, y:ps[i].y+(ps[i+1].y-ps[i].y)*r.tt}; if(!best || r.d<best.d) best={d:r.d, x:q.x, y:q.y}; } return best; }
+// Where street A meets street B; if they meet more than once, the meeting closest to where we are.
+function junctionOf(A, B, near){
+  const cand=[];
+  const test = (P, Q) => { for(const ps of P) for(const v of ps){ const n=nearestOnPolys(Q, v); if(n && n.d < 18) cand.push(v); } };
+  test(A, B); test(B, A);
+  if(cand.length) return cand.reduce((a,b) => !near || pd(a,near) <= pd(b,near) ? a : b);
+  return null;
+}
+// A point about `want` metres into street B from point J (for turning into a road and coming back out)
+function pointInto(B, J, want=45){
+  let best=null, bs=Infinity;
+  for(const ps of B) for(const v of ps){ const d=pd(v,J); if(d<20 || d>160) continue; const sc=Math.abs(d-want); if(sc<bs){ bs=sc; best=v; } }
+  return best;
+}
+function pointAlong(P, last, prev, want=70){
+  let best=null, bs=Infinity;
+  for(const ps of P) for(const v of ps){ const d=pd(v,last); if(d<35 || d>160) continue; if(prev && pd(v,prev) < pd(last,prev)) continue; const sc=Math.abs(d-want); if(sc<bs){ bs=sc; best=v; } }
+  return best;
+}
+const ll = (o, v) => ({lat: v.lat ?? (o.lat0 + v.y/o.ky), lon: v.lon ?? (o.lon0 + v.x/o.kx), x:v.x, y:v.y});
+async function compileRecipe(route){
+  const cached = store.get(RCP_V+route.id, null);
+  if(cached){ route.stops=cached.stops; route.rcp=cached.rcp; return; }
+  const C = CENTRES[route.centre], M = await centreStreets(route.centre), o = M.o;
+  let start = C.start ? {lat:C.start[0], lon:C.start[1], ...pxy(o,C.start[0],C.start[1])} : M.startPt;
+  if(!start && C.startStreet){ const P=streetPolys(M, C.startStreet); if(P){ const ps=P[0]; start = ps[Math.floor(ps.length/2)]; } }
+  const wps=[], mv=[], hills=[], missing=[];
+  const push = (v, label) => { const p=ll(o,v); const last=wps[wps.length-1]; if(last && Math.hypot(last.x-p.x, last.y-p.y) < 12) return wps.length-1; wps.push({...p, label}); return wps.length-1; };
+  if(start) push(start, CENTRES[route.centre].name);
+  let cur=null, curName="";
+  for(const it of route.recipe){
+    const last = wps[wps.length-1], prev = wps[wps.length-2];
+    if(it.hill){ hills.push(wps.length-1); continue; }
+    if(it.mv && !it.in){ if(cur && last){ const v=pointAlong(cur, last, prev); if(v) mv.push({i:push(v, curName), type:it.mv}); } continue; }
+    const name = it.in || it, P = streetPolys(M, name);
+    if(!P){ missing.push(String(name).split("|")[0]); continue; }
+    if(!cur){ if(!last){ const ps=P[0]; push(ps[0], name); } cur=P; curName=String(name).split("|")[0]; continue; }
+    const J = junctionOf(cur, P, last);
+    if(it.in){
+      const base = J || nearestOnPolys(P, last);
+      const v = base && pointInto(P, base) || base;
+      if(v) mv.push({i:push(v, it.in.split("|")[0]), type:it.mv});
+      continue;                                     // back out onto the same street
+    }
+    if(J) push(J, name);
+    else { const n = last && nearestOnPolys(P, last); if(n) push(n, name); missing.push(String(name).split("|")[0]+" (junction)"); }
+    cur=P; curName=String(name).split("|")[0];
+  }
+  if(start) push(start, CENTRES[route.centre].name);
+  if(wps.length < 3) throw new Error("recipe: too few points");
+  route.stops = wps.map(w => [+w.lat.toFixed(7), +w.lon.toFixed(7), w.label]);
+  route.rcp = {mv, hills, missing};
+  store.set(RCP_V+route.id, {stops:route.stops, rcp:route.rcp});
+}
+
+// =====================================================================
 // Manoeuvres (turnabout, reverse around a corner) on the practice routes
 // =====================================================================
 // Found where the route turns back on itself at a stop. Your changes are kept per route on this phone.
@@ -1417,7 +1509,11 @@ function detectManoeuvres(route){
 }
 function applyManoeuvres(route){
   const e = mvEdits[route.id] || {}, list=[];
-  for(const m of detectManoeuvres(route)){
+  const found = route.rcp ? [
+      ...route.rcp.mv.map((m,n) => ({key:"f"+n, along:route.stopAlong[m.i], guess:m.type})),
+      ...route.rcp.hills.map((k,n) => ({key:"h"+n, along: k+1 < route.stopAlong.length ? (route.stopAlong[k]+route.stopAlong[k+1])/2 : route.stopAlong[k], guess:"hill"}))
+    ].filter(m => m.along!=null) : detectManoeuvres(route);
+  for(const m of found){
     const type = (e.auto||{})[m.key] || m.guess;
     if(type!=="none") list.push({key:m.key, along:m.along, type, auto:true});
   }
@@ -1434,14 +1530,15 @@ function applyManoeuvres(route){
 }
 function mvMarker(route, m){
   const mk = L.marker([m.lat, m.lon], {keyboard:false, zIndexOffset:300, icon:L.divIcon({className:"", iconSize:[30,30], iconAnchor:[15,15],
-    html:`<div class="mvm">${ico(m.type==="rev" ? "reverse" : "uturn")}</div>`})}).bindTooltip(esc(t("mv_"+m.type)), {direction:"top", offset:[0,-14]});
+    html:`<div class="mvm ${m.type}">${ico(MV_IC[m.type])}</div>`})}).bindTooltip(esc(t("mv_"+m.type)), {direction:"top", offset:[0,-14]});
   mk.on("click", () => { if(!S) L.popup(mvPopOpts([0,-8])).setLatLng([m.lat,m.lon]).setContent(mvMenu(route, m)).openOn(map); });
   return mk;
 }
+const MV_IC = {turn:"uturn", rev:"reverse", hill:"climb"};
 const mvPopOpts = off => ({className:"mvpop", offset:off, autoPanPaddingTopLeft:[16,60], autoPanPaddingBottomRight:[80, sheetH()+16]});
 function mvMenu(route, m){
   const btn = (type, label, ic) => `<button type="button" class="mvb ${m && m.type===type ? "on" : ""}" data-mvr="${route.id}" data-mvk="${m ? m.key : ""}" data-mvt="${type}">${ic ? ico(ic) : ""}${esc(label)}</button>`;
-  return `<div class="mvmenu"><b>${esc(m ? t("mv_title") : t("mv_add"))}</b>${btn("turn", t("mv_turn"), "uturn")}${btn("rev", t("mv_rev"), "reverse")}${m ? btn("none", m.auto ? t("mv_none") : t("mv_remove")) : ""}</div>`;
+  return `<div class="mvmenu"><b>${esc(m ? t("mv_title") : t("mv_add"))}</b>${btn("turn", t("mv_turn"), "uturn")}${btn("rev", t("mv_rev"), "reverse")}${btn("hill", t("mv_hill"), "climb")}${m ? btn("none", m.auto ? t("mv_none") : t("mv_remove")) : ""}</div>`;
 }
 function mvAddPopup(route, ll){
   const r=nearest(route, pxy(route.o, ll.lat, ll.lng), 0, route.pts.length);
@@ -1472,6 +1569,7 @@ const log = store.get("ttr-log", {});
 let reports = store.get("ttr-reports", []);
 const CACHE_V = "ttr-osrm-v2-";
 async function loadRoute(route){
+  if(route.recipe && !(route.stops && route.stops.length)){ route.building=true; renderRoutes(); try{ await compileRecipe(route); } finally { route.building=false; } }
   let data = store.get(CACHE_V+route.id, null);
   if(!data){ data = await osrmFetch(route.stops.map(s => `${s[1]},${s[0]}`).join(";"), null, "car", "&continue_straight=false"); store.set(CACHE_V+route.id, data); }
   applyOsrm(route, data);
@@ -1483,12 +1581,26 @@ function fallbackRoute(route){
   route.ok = false;
 }
 const bestScore = id => { const s=reports.filter(r => r.rid===id).map(r => r.score); return s.length ? Math.max(...s) : null; };
+let centre = store.get("ttr-centre", "tallaght"); if(!CENTRES[centre]) centre="tallaght";
+function renderCentres(){
+  $("centreSeg").innerHTML = Object.entries(CENTRES).map(([k,c]) => `<button type="button" data-centre="${k}" aria-pressed="${k===centre}">${esc(c.name)} · ${ROUTES.filter(r => r.centre===k).length}</button>`).join("");
+  const C = CENTRES[centre];
+  $("testKicker").textContent = t("centreKicker", {c:C.name, a:C.addr}); $("practiceTitle").textContent = t("routesAt", {c:C.name});
+}
+function routeMeta(r){
+  if(r.building) return t("rcBuilding");
+  if(r.recipe && r.buildFail && !r.pts) return t("rcFail");
+  const km = r.total ? num(r.total/1000,1)+" km" : "…";
+  const first = r.recipe ? `${r.mv ? t("cnt_mv",{n:r.mv.length}) : t("stepsN",{n:r.recipe.length})}` : t("stopsN",{n:r.stops.length-2});
+  return `${first} · ${km}${r.ok===false?" · "+t("straight"):""} · ${t("drivenN",{n:(log[r.id]||[]).length})}`;
+}
 function renderRoutes(){
-  $("routeList").innerHTML = ROUTES.map(r => {
-    const n = (log[r.id]||[]).length, km = r.total ? num(r.total/1000,1)+" km" : "…", best = bestScore(r.id);
+  renderCentres();
+  $("routeList").innerHTML = ROUTES.filter(r => r.centre===centre).map(r => {
+    const best = bestScore(r.id);
     return `<button class="item route ${practice===r?"sel":""}" type="button" data-id="${r.id}" style="--c:${r.color}">
       <span class="badge">${r.id}</span>
-      <span class="meta"><b>${esc(routeName(r))}</b><small>${t("stopsN",{n:r.stops.length-2})} · ${km}${r.ok===false?" · "+t("straight"):""} · ${t("drivenN",{n})}</small></span>
+      <span class="meta"><b>${esc(routeName(r))}</b><small>${esc(routeMeta(r))}</small></span>
       ${best!=null?`<span class="score s-${grade(best)}">${best}</span>`:""}</button>`;
   }).join("");
   $("driveBtn").disabled = $("rehearseBtn").disabled = !(practice && practice.pts);
@@ -1503,11 +1615,18 @@ function renderIntel(){
   if(sheetOpen) renderSheet(r);
 }
 function renderSheet(r){
-  const rows = (r.steps||[]).map(s => ({along:s.along, html:`<span class="rsi ${s.icon}">${s.icon==="rb" ? `<b>${s.exit||""}</b>` : s.icon==="flag" ? ico("flag") : s.icon==="mv" ? ico(s.mvType==="rev" ? "reverse" : "uturn") : `<span style="display:inline-flex;transform:rotate(${s.deg||0}deg)">${ico("arrow")}</span>`}</span><div><b>${esc(s.text)}</b><small>${t("atKm",{d:fmtDist(s.along)})}</small></div>`}));
+  const rows = (r.steps||[]).map(s => ({along:s.along, html:`<span class="rsi ${s.icon}">${s.icon==="rb" ? `<b>${s.exit||""}</b>` : s.icon==="flag" ? ico("flag") : s.icon==="mv" ? ico(MV_IC[s.mvType] || "uturn") : `<span style="display:inline-flex;transform:rotate(${s.deg||0}deg)">${ico("arrow")}</span>`}</span><div><b>${esc(s.text)}</b><small>${t("atKm",{d:fmtDist(s.along)})}</small></div>`}));
   (r.hz||[]).forEach(h => rows.push({along:h.along, html:`<span class="rsi hz" style="--c:${HZ_COL[h.type]}">${ico(h.type)}</span><div><b class="dim">${esc(t("hz_"+h.type))}</b><small>${t("atKm",{d:fmtDist(h.along)})}</small></div>`}));
   (r.limits||r.lim||[]).forEach((sg,i) => { if(i>0) rows.push({along:sg.from, html:`<span class="rsi lim"><b>${sg.v}</b></span><div><b class="dim">${esc(t("limitTo",{n:sg.v}))}</b><small>${t("atKm",{d:fmtDist(sg.from)})}</small></div>`}); });
   rows.sort((a,b) => a.along-b.along);
-  $("routeSheet").innerHTML = `<p class="note mvtip">${esc(t("mv_tip"))}</p>` + rows.map(x => `<div class="rs">${x.html}</div>`).join("");
+  let desc = "";
+  if(r.recipe){
+    const items = r.recipe.map(it => typeof it==="string" ? t("rcOnto",{s:it.split("|")[0]}) : it.in ? `<b>${esc(t("rcIn_"+it.mv,{s:it.in.split("|")[0]}))}</b>` : it.hill ? `<b>${esc(t("rcHill"))}</b>` : `<b>${esc(t("rcTurnHere"))}</b>`);
+    desc = `<ol class="rdesc">${items.map(x => `<li>${x.startsWith("<b>") ? x : esc(x)}</li>`).join("")}</ol>`
+      + (r.rcp && r.rcp.missing.length ? `<p class="note warnnote">${esc(t("rcMissing",{s:r.rcp.missing.join(", ")}))}</p>` : "")
+      + `<p class="note">${esc(t("rcSrc",{s:r.src}))} <a href="${esc(r.srcUrl)}" target="_blank" rel="noopener">${esc(hostOf(r.srcUrl))}</a></p>`;
+  }
+  $("routeSheet").innerHTML = desc + `<p class="note mvtip">${esc(t("mv_tip"))}</p>` + rows.map(x => `<div class="rs">${x.html}</div>`).join("");
 }
 $("sheetToggle").onclick = () => { sheetOpen=!sheetOpen; renderIntel(); };
 $("routeList").addEventListener("click", e => {
@@ -1823,7 +1942,7 @@ function startSession(r, mode){
   map.setZoom(17);
   if(r.isDest){ showSign({icon:"arrow", deg:0}, "", false); $("signInstr").textContent = t("findingYou"); }
   else {
-    say((settings.examiner ? t("ex_intro") : t("v_intro",{id:r.id, n:routeName(r), s:r.stops.length-2})) + (mode==="sim" ? t("v_introSim") : ""), true);
+    say((settings.examiner ? t("ex_intro") : r.recipe ? t("v_introR",{id:r.id, n:routeName(r)}) : t("v_intro",{id:r.id, n:routeName(r), s:r.stops.length-2})) + (mode==="sim" ? t("v_introSim") : ""), true);
     if(settings.examiner && mode==="gps") S.ex = planPullIns(r);
     { const L0=limitAt(r,0); if(L0) setLimit(L0, true, pointAt(r,0)); }
     if(ttKey()) liveTraffic(r, null, true);
@@ -2288,8 +2407,8 @@ function updateStats(){
     setStat("C", secs==null ? "–" : hhmm(Date.now()+secs*1000), t("arrive"));
     return;
   }
-  const inner=(r.stopAlong||[]).slice(1,-1), el=Math.floor((Date.now()-S.startedAt)/1000);
-  setStat("A", `${inner.filter(a => a <= S.progress + 15).length}/${inner.length}`, t("stops"));
+  const inner = r.recipe ? (r.mv||[]).map(m => m.along) : (r.stopAlong||[]).slice(1,-1), el=Math.floor((Date.now()-S.startedAt)/1000);
+  setStat("A", `${inner.filter(a => a <= S.progress + 15).length}/${inner.length}`, t(r.recipe ? "mvShort" : "stops"));
   setStat("B", left, t("kmLeft"));
   setStat("C", `${Math.floor(el/60)}:${String(el%60).padStart(2,"0")}`, t("elapsed"));
   stopMarkers.forEach((mk,i) => {
@@ -2502,7 +2621,7 @@ function applyLang(){
 // =====================================================================
 // Boot
 // =====================================================================
-const APP_V = 13;
+const APP_V = 14;
 // Shows which version is running, and reports script errors on screen so problems on the phone are visible.
 $("appVer").textContent = "Drive Ireland · v" + APP_V;
 window.addEventListener("error", e => { if(/\/(app|data|theory)\.js/.test(e.filename||"")) toast("Error: " + (e.message||"") + " (" + (e.filename||"").split("/").pop().split("?")[0] + ":" + e.lineno + ")", 8000); });
@@ -2515,17 +2634,38 @@ window.addEventListener("error", e => { if(/\/(app|data|theory)\.js/.test(e.file
     const st = navigator.permissions && await navigator.permissions.query({name:"geolocation"});
     if(st && st.state==="granted") locate(h => { if(h){ renderExplore(); if(tab==="go" && !dest) map.setView([h.lat,h.lon], 14); } }, true);
   }catch(e){}
-  let failed=0;
-  for(const r of ROUTES){
-    try{ await loadRoute(r); }catch(e){ failed++; fallbackRoute(r); }
-    renderRoutes();
-    if(r===practice && tab==="test" && !S) drawRoute(r);
-  }
-  $("loadState").textContent = failed ? t("someOffline") : "";
-  for(const r of ROUTES){
-    if(!r.ok) continue;
-    await loadIntel(r, r.id);
-    if(r===practice){ renderIntel(); if(tab==="test" && !S) drawRoute(r, false); }
-  }
-  for(const r of ROUTES){ if(r.ok){ await loadRouteLimits(r, r.id+"-"+Math.round(r.total)); if(r===practice) renderIntel(); } }
+  if(practice && practice.centre!==centre){ centre = practice.centre; store.set("ttr-centre", centre); }
+  await loadCentre(centre);
 })();
+// Load the routes of one test centre (only when you look at it, to keep data use down).
+var centreLoaded = {};
+async function loadCentre(cid){
+  if(centreLoaded[cid]) return centreLoaded[cid];
+  return centreLoaded[cid] = (async () => {
+    const list = ROUTES.filter(r => r.centre===cid);
+    let failed=0;
+    for(const r of list){
+      if(r.pts) continue;
+      try{ await loadRoute(r); r.buildFail=false; }
+      catch(e){ failed++; if(r.recipe && !(r.stops && r.stops.length)){ r.buildFail=true; } else fallbackRoute(r); }
+      renderRoutes();
+      if(r===practice && tab==="test" && !S && r.pts) drawRoute(r);
+    }
+    if(cid===centre) $("loadState").textContent = failed ? t("someOffline") : "";
+    if(failed) centreLoaded[cid] = null;                       // try again next time
+    for(const r of list){
+      if(!r.ok) continue;
+      await loadIntel(r, r.id+"-"+Math.round(r.total));
+      if(r===practice){ renderIntel(); if(tab==="test" && !S) drawRoute(r, false); }
+    }
+    for(const r of list){ if(r.ok){ await loadRouteLimits(r, r.id+"-"+Math.round(r.total)); if(r===practice) renderIntel(); } }
+  })();
+}
+$("centreSeg").addEventListener("click", e => {
+  const b = e.target.closest("[data-centre]"); if(!b || b.dataset.centre===centre) return;
+  centre = b.dataset.centre; store.set("ttr-centre", centre);
+  practice = ROUTES.find(r => r.centre===centre); store.set("ttr-last", practice.id);
+  renderRoutes(); refreshMap();
+  if(practice.pts) drawRoute(practice); else fitTo(L.latLngBounds([[CENTRES[centre].bbox[0],CENTRES[centre].bbox[1]],[CENTRES[centre].bbox[2],CENTRES[centre].bbox[3]]]), 14);
+  loadCentre(centre);
+});
