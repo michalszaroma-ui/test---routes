@@ -45,6 +45,22 @@ const ROUTES = [
    recipe:["Jamestown Road","Clancy Avenue|Clancey Avenue","McKee Road",{hill:1},"Sycamore Road","Cedarwood Road",{in:"Cedarwood Park",mv:"rev"},{in:"Cedarwood Avenue",mv:"turn"},"Oakwood Park","Sycamore Road","Clancy Road","Clancy Avenue|Clancey Avenue","Jamestown Road","Seamus Ennis Road","Beneavin Drive","Beneavin Road","Ferndale Road","Ferndale Avenue","Ballygall Road East","Glasnevin Avenue","Willow Park Avenue","Willow Park Road","Beneavin Drive","Beneavin Road","Ballygall Road West|Glasnevin Avenue","Grove Road","Sycamore Road","Jamestown Road"]},
   {id:14, centre:"raheny", name:"Clontarf, Mount Prospect & Chelsea Gardens", pl:"Clontarf, Mount Prospect i Chelsea Gardens", color:"#33e3a1", src:"ADI Driving School · Raheny route 1", srcUrl:"https://adidriving.ie/driving-test-routes/", stops:[],
    recipe:["All Saints Park","All Saints Drive","Watermill Road","Clontarf Road|James Larkin Road","Mount Prospect Avenue",{hill:1},{in:"Baymount Park",mv:"rev"},"Mount Prospect Drive","Mount Prospect Park","Mount Prospect Avenue","Seapark Road","Conquer Hill Road",{in:"Chelsea Gardens",mv:"turn"},"Kincora Road","Vernon Avenue","Howth Road","All Saints Road","All Saints Park"]},
+
+  // ----- More routes: DriveFlow's free preview route (Mulhuddart) and practice loops through the manoeuvre spots they list -----
+  {id:15, centre:"mulhuddart", name:"Church Road, Dromheath & Sheephill", pl:"Church Road, Dromheath i Sheephill", color:"#38e1ff", src:"DriveFlow · Mulhuddart preview route", srcUrl:"https://www.driveflow.ie/mulhuddart-routes.html", stops:[],
+   recipe:["Old Navan Road","Church Road",{in:"Dromheath Avenue",mv:"turn"},"Cruiserath Road","Blanchardstown Road North","Blackcourt Road","Sheephill Park","Westway",{in:"Sheephill Green",mv:"turn"},"Sheephill Park","Blackcourt Road","Blanchardstown Road North","Old Navan Road","Damastown Road|Damastown Way","Parnell Drive|Damastown Avenue"]},
+  {id:16, centre:"dunlaoghaire", name:"Pottery Road, Pearse Villas & Sycamore", pl:"Pottery Road, Pearse Villas i Sycamore", color:"#ff7ab8", src:"DriveFlow · practice loop through known manoeuvre spots", srcUrl:"https://www.driveflow.ie/dun-laoghaire-routes.html", stops:[],
+   recipe:["Clonkeen Crescent","Pottery Road","Johnstown Road","Rochestown Avenue",{via:"Pearse Villas"},{in:"Park Close",mv:"rev"},{via:"Sycamore Avenue"},{in:"Sycamore Walk",mv:"turn"},{via:"Hillcourt Road",hill:1},{via:"Rochestown Avenue"},{via:"Pottery Road"},"Clonkeen Crescent"]},
+  {id:17, centre:"dunlaoghaire", name:"Kill Avenue, Meadow Vale & Churchview", pl:"Kill Avenue, Meadow Vale i Churchview", color:"#a48cff", src:"DriveFlow · practice loop through known manoeuvre spots", srcUrl:"https://www.driveflow.ie/dun-laoghaire-routes.html", stops:[],
+   recipe:["Clonkeen Crescent","Pottery Road","Kill Avenue",{via:"Beech Park Grove|Beechpark Grove"},{in:"Meadow Vale",mv:"rev"},{via:"Churchview Drive",mv:"turn"},{via:"Granitefield",hill:1},{via:"Kill Avenue"},{via:"Pottery Road"},"Clonkeen Crescent"]},
+  {id:18, centre:"killester", name:"Brookwood & Gracefield", pl:"Brookwood i Gracefield", color:"#33e3a1", src:"DriveFlow · Killester route 1 (first part, then back to the centre)", srcUrl:"https://www.driveflow.ie/killester-routes.html", stops:[],
+   recipe:["Howth Road","Brookwood Avenue","Brookwood Rise",{via:"Brookwood Crescent",hill:1},"Gracefield Avenue"]},
+  {id:19, centre:"tallaght", name:"Mountain Park, Killinarden & Treepark", pl:"Mountain Park, Killinarden i Treepark", color:"#7fd8ff", src:"DriveFlow · practice loop through known manoeuvre spots", srcUrl:"https://www.driveflow.ie/tallaght-routes.html", stops:[],
+   recipe:["Broomhill Road","Airton Road","Belgard Road","Old Blessington Road|Blessington Road","Belgard Square East",{via:"Avonbeg Park"},{in:"Mountain Park",mv:"turn"},{via:"The Meadows West"},{in:"Alpine Rise",mv:"rev"},{via:"Treepark Road",hill:1},"Mayberry Road","Greenhills Road","Broomhill Road"]},
+  {id:20, centre:"tallaght", name:"Elmcastle, St Aongus Green & Glenview", pl:"Elmcastle, St Aongus Green i Glenview", color:"#ffa3d6", src:"DriveFlow · practice loop through known manoeuvre spots", srcUrl:"https://www.driveflow.ie/tallaght-routes.html", stops:[],
+   recipe:["Broomhill Road","Greenhills Road",{via:"Elmcastle Park",hill:1},{via:"Saint Aongus Road"},{in:"Saint Aongus Green",mv:"rev"},{via:"Glenview Park",mv:"turn"},{via:"Main Road"},"Greenhills Road","Broomhill Road"]},
+  {id:21, centre:"tallaght", name:"Parkhill, Redwood Walk & Homelawn", pl:"Parkhill, Redwood Walk i Homelawn", color:"#c3b4ff", src:"DriveFlow · practice loop through known manoeuvre spots", srcUrl:"https://www.driveflow.ie/tallaght-routes.html", stops:[],
+   recipe:["Broomhill Road","Greenhills Road","Mayberry Road","Parkhill Road",{in:"Parkhill Avenue",mv:"rev"},{via:"Treepark Road"},{in:"Redwood Walk",mv:"rev"},{via:"Homelawn Villas",mv:"turn"},{via:"Belgard Road"},"Airton Road","Broomhill Road"]},
 ];
 
 // Test centres. bbox = s,w,n,e area the routes stay in; start = where the test begins.
@@ -52,6 +68,9 @@ const CENTRES = {
   tallaght:{name:"Tallaght", addr:"Premier Business Park, Broomhill Rd", start:[53.2962975,-6.3620751], bbox:[53.278,-6.392,53.312,-6.330]},
   finglas:{name:"Finglas", addr:"Jamestown Business Park, Jamestown Rd", startName:"Jamestown Business Park", bbox:[53.366,-6.322,53.408,-6.262]},
   raheny:{name:"Raheny", addr:"4 All Saints Park, Raheny", startStreet:"All Saints Park", bbox:[53.352,-6.235,53.392,-6.160]},
+  mulhuddart:{name:"Mulhuddart", addr:"Old Navan Rd, Damastown (M3 Services)", start:[53.40655848,-6.409974001], bbox:[53.383,-6.448,53.428,-6.368]},
+  dunlaoghaire:{name:"Dún Laoghaire", addr:"Baker's Point, Pottery Rd", startStreet:"Clonkeen Crescent", bbox:[53.262,-6.182,53.300,-6.110]},
+  killester:{name:"Killester", addr:"306 Howth Rd (St Brigid's Parish Centre)", startName:"Brigid", bbox:[53.360,-6.235,53.392,-6.175]},
 };
 
 // Places worth a trip. Coordinates are the main car park / visitor centre (approximate).
@@ -359,6 +378,7 @@ en:{
   // report
   rep_title:"Drive report", rep_time:"Time", rep_dist:"Distance", rep_avg:"Average", rep_max:"Top speed", rep_speeding:"Speeding", rep_brakes:"Harsh braking", rep_stops:"Full stops",
   grade_a:"Test ready", grade_b:"Good drive", grade_c:"Needs work", grade_d:"Keep practising",
+  lsrc_tt:"TomTom", lsrc_osm:"OSM", lsrc_you:"you", limClear:"Clear", limSaved:"Limit {n} saved for this stretch", limCleared:"Limit cleared", dsLimits:"Speed limits", dsChanges:v=>enN(v.n,"section","sections"), retry:"Retry",
   rep_pass:"Would pass", rep_passWhy:"No dangerous faults and serious faults under every limit.", rep_fail:"Would fail",
   fail_g3:"A Grade 3 (dangerous) fault is an automatic fail.", fail_same4:"4 or more serious faults of the same kind.", fail_head6:"6 or more serious faults under one heading.", fail_total9:"9 or more serious faults in total.",
   g1:"Minor (G1)", g2:"Serious (G2)", g3:"Dangerous (G3)", gShort:"G{g}", rep_smooth:"Smoothness", rep_vsLast:"vs last time", dir_left:"left", dir_right:"right",
@@ -419,7 +439,7 @@ en:{
   rc_ride:"Rain expected around {t}, during your ride. Pack your rain gear.", rc_later:"Dry now. Rain from about {t}, so leave before then or take your rain gear.",
   rc_showers:"Mostly dry, but a {p}% chance of showers. Worth packing a jacket.", rc_fail:"Couldn't load the rain forecast. Check your signal.",
   mv_hill:"Hill start", v_mv_hill:"Hill start here. Pull in on the left and stop. Then move off on the hill smoothly without rolling back: mirrors, signal, check your blind spot.", ex_mv_hill:"Pull in on the left and stop, please. When you're ready, move off.",
-  routesAt:"{c} test routes", centreKicker:"RSA {c} · {a}", mvShort:"manoeuvres", rcOnto:"onto {s}", rcIn_rev:"reverse around the corner into {s}", rcIn_turn:"turnabout in {s}", rcTurnHere:"turnabout on this road", rcHill:"hill start", rcSrc:"Route from {s}. Drawn automatically from OpenStreetMap, so it can differ slightly from the real route: follow the steps above.", rcMissing:"Couldn't find on the map: {s}", rcBuilding:"Building the route from the map…", rcFail:"Couldn't build this route right now. Check your signal and reopen the Test tab.", stepsN:v=>enN(v.n,"step","steps"),
+  routesAt:"{c} test routes", centreKicker:"RSA {c} · {a}", mvShort:"manoeuvres", rcOnto:"onto {s}", rcIn_rev:"reverse around the corner into {s}", rcIn_turn:"turnabout in {s}", rcTurnHere:"turnabout on this road", rcHill:"hill start", rcVia:"along {s}", rcAt_turn:"turnabout on {s}", rcAt_rev:"reverse around the corner from {s}", rcHillOn:"hill start on {s}", rcSrc:"Route from {s}. Drawn automatically from OpenStreetMap, so it can differ slightly from the real route: follow the steps above.", rcMissing:"Couldn't find on the map: {s}", rcBuilding:"Building the route from the map…", rcFail:"Couldn't build this route right now. Check your signal and reopen the Test tab.", stepsN:v=>enN(v.n,"step","steps"),
   v_introR:v=>`Route ${v.id}, ${v.n}.`,
   mv_turn:"Turnabout", mv_rev:"Reverse around corner", mv_none:"Not a manoeuvre", mv_remove:"Remove", mv_add:"Add a manoeuvre here", mv_title:"Manoeuvre",
   mv_turn_s:"Turn the car around using forward and reverse gears", mv_rev_s:"Reverse into the road on the left, close to the kerb",
@@ -449,7 +469,7 @@ pl:{
   settings:"Ustawienia", language:"Język", map:"Mapa", dark:"Ciemna", light:"Jasna", sat:"Satelita", driving:"Jazda", alerts:"Ostrzeżenia",
   sl_t:"Pokazuj ograniczenia prędkości", sl_s:"Dane z TomTom i OpenStreetMap. Zwykle są poprawne, ale zawsze liczą się znaki na drodze.",
   mv_hill:"Ruszanie na wzniesieniu", v_mv_hill:"Tutaj ruszanie na wzniesieniu. Zjedź do lewej i zatrzymaj się. Potem płynnie ruszaj pod górę, nie staczając się: lusterka, kierunkowskaz, martwe pole.", ex_mv_hill:"Proszę zjechać do lewej i się zatrzymać. Kiedy będzie pan gotowy, proszę ruszyć.",
-  routesAt:"Trasy egzaminacyjne {c}", centreKicker:"RSA {c} · {a}", mvShort:"manewry", rcOnto:"w {s}", rcIn_rev:"cofanie za róg w {s}", rcIn_turn:"zawracanie w {s}", rcTurnHere:"zawracanie na tej ulicy", rcHill:"ruszanie na wzniesieniu", rcSrc:"Trasa według: {s}. Narysowana automatycznie z OpenStreetMap, więc może się nieco różnić od prawdziwej: kieruj się powyższymi krokami.", rcMissing:"Nie znaleziono na mapie: {s}", rcBuilding:"Buduję trasę z mapy…", rcFail:"Nie udało się teraz zbudować trasy. Sprawdź zasięg i otwórz ponownie zakładkę Egzamin.", stepsN:v=>`${v.n} ${plN(v.n,"krok","kroki","kroków")}`,
+  routesAt:"Trasy egzaminacyjne {c}", centreKicker:"RSA {c} · {a}", mvShort:"manewry", rcOnto:"w {s}", rcIn_rev:"cofanie za róg w {s}", rcIn_turn:"zawracanie w {s}", rcTurnHere:"zawracanie na tej ulicy", rcHill:"ruszanie na wzniesieniu", rcVia:"przez {s}", rcAt_turn:"zawracanie na {s}", rcAt_rev:"cofanie za róg z {s}", rcHillOn:"ruszanie na wzniesieniu na {s}", rcSrc:"Trasa według: {s}. Narysowana automatycznie z OpenStreetMap, więc może się nieco różnić od prawdziwej: kieruj się powyższymi krokami.", rcMissing:"Nie znaleziono na mapie: {s}", rcBuilding:"Buduję trasę z mapy…", rcFail:"Nie udało się teraz zbudować trasy. Sprawdź zasięg i otwórz ponownie zakładkę Egzamin.", stepsN:v=>`${v.n} ${plN(v.n,"krok","kroki","kroków")}`,
   v_introR:v=>`Trasa ${v.id}, ${v.n}.`,
   mv_turn:"Zawracanie", mv_rev:"Cofanie za róg", mv_none:"To nie manewr", mv_remove:"Usuń", mv_add:"Dodaj tu manewr", mv_title:"Manewr",
   mv_turn_s:"Zawróć samochód, używając biegu do przodu i wstecznego", mv_rev_s:"Wjedź tyłem w drogę po lewej, blisko krawężnika",
@@ -523,6 +543,7 @@ pl:{
   prep_before:"Przed egzaminem", prep_checks:"Kontrole techniczne", prep_controls:"Obsługa urządzeń",
   rep_title:"Raport z jazdy", rep_time:"Czas", rep_dist:"Dystans", rep_avg:"Średnia", rep_max:"Maks. prędkość", rep_speeding:"Przekroczenia", rep_brakes:"Ostre hamowania", rep_stops:"Pełne zatrzymania",
   grade_a:"Poziom egzaminacyjny", grade_b:"Dobra jazda", grade_c:"Do poprawy", grade_d:"Ćwicz dalej",
+  lsrc_tt:"TomTom", lsrc_osm:"OSM", lsrc_you:"ty", limClear:"Wyczyść", limSaved:"Limit {n} zapisany na tym odcinku", limCleared:"Limit wyczyszczony", dsLimits:"Ograniczenia", dsChanges:v=>`${v.n} ${plN(v.n,"odcinek","odcinki","odcinków")}`, retry:"Ponów",
   rep_pass:"Zdany", rep_passWhy:"Brak błędów niebezpiecznych, a poważne w granicach limitów.", rep_fail:"Niezdany",
   fail_g3:"Błąd 3. stopnia (niebezpieczny) oznacza automatycznie niezdany egzamin.", fail_same4:"4 lub więcej poważnych błędów tego samego rodzaju.", fail_head6:"6 lub więcej poważnych błędów w jednej kategorii.", fail_total9:"9 lub więcej poważnych błędów łącznie.",
   g1:"Drobne (G1)", g2:"Poważne (G2)", g3:"Niebezpieczne (G3)", gShort:"G{g}", rep_smooth:"Płynność", rep_vsLast:"względem poprzedniej", dir_left:"w lewo", dir_right:"w prawo",

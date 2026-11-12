@@ -208,16 +208,28 @@ function fetchT(url, opts={}, ms=10000){
 const OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter",
   "https://maps.mail.ru/osm/tools/overpass/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
 let opBest = store.get("ttr-opbest", 0) % OVERPASS.length;
-async function overpass(q, signal, ms=12000){
-  let lastErr;
-  for(let n=0;n<OVERPASS.length;n++){
+// The free OpenStreetMap servers allow only a couple of requests at once per phone, so requests queue up here,
+// one at a time, and a busy server (429/504) gets a short pause before the next mirror is tried.
+let opChain = Promise.resolve(), opLastErr = "";
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function overpass(q, signal, ms=25000){
+  const run = () => overpassNow(q, signal, ms);
+  const p = opChain.then(run, run);
+  opChain = p.catch(() => {});
+  return p;
+}
+async function overpassNow(q, signal, ms){
+  let lastErr, busy=0;
+  for(let n=0;n<OVERPASS.length + Math.min(busy, OVERPASS.length);n++){
     const i=(opBest+n)%OVERPASS.length;
     try{
       const res = await fetchT(OVERPASS[i], {method:"POST", body:"data="+encodeURIComponent(q), headers:{"Content-Type":"application/x-www-form-urlencoded"}, signal}, ms);
-      if(res.ok){ const j=await res.json(); if(i!==opBest){ opBest=i; store.set("ttr-opbest", i); } return j; }
+      if(res.ok){ const j=await res.json(); if(i!==opBest){ opBest=i; store.set("ttr-opbest", i); } opLastErr=""; return j; }
       lastErr = new Error("overpass "+res.status);
+      if(res.status===429 || res.status===504){ busy++; await sleep(1500 + 1500*n); }
     }catch(e){ if(e.name==="AbortError") throw e; lastErr=e; }
   }
+  opLastErr = String(lastErr && lastErr.message || "overpass");
   throw lastErr || new Error("overpass");
 }
 // ---------- Opening hours ----------
@@ -644,7 +656,7 @@ async function osmPlaces(cells){
   const bb=`${Math.min(...ys)*PL_CELL},${Math.min(...xs)*PL_CELL},${(Math.max(...ys)+1)*PL_CELL},${(Math.max(...xs)+1)*PL_CELL}`;
   cells.forEach(([x,y]) => plCells.set(x+","+y, "busy"));
   try{
-    const j = await overpass(`[out:json][timeout:15];(nwr["shop"]["name"](${bb});nwr["amenity"~"^(cafe|restaurant|fast_food|pub|bar|pharmacy|fuel|bank|atm|post_office|charging_station|hospital|doctors|dentist|veterinary|ice_cream|cinema|library|car_wash)$"]["name"](${bb});nwr["tourism"~"^(hotel|guest_house|museum|attraction)$"]["name"](${bb}););out center tags 1500;`, null, 12000);
+    const j = await overpass(`[out:json][timeout:15];(nwr["shop"]["name"](${bb});nwr["amenity"~"^(cafe|restaurant|fast_food|pub|bar|pharmacy|fuel|bank|atm|post_office|charging_station|hospital|doctors|dentist|veterinary|ice_cream|cinema|library|car_wash)$"]["name"](${bb});nwr["tourism"~"^(hotel|guest_house|museum|attraction)$"]["name"](${bb}););out center tags 1500;`, null, 15000);
     cells.forEach(([x,y]) => plCells.set(x+","+y, "ok"));
     for(const e of j.elements||[]){
       const id=e.type+e.id; if(plSeen.has(id)) continue; plSeen.add(id);
@@ -1404,23 +1416,67 @@ function normName(x){
 }
 const nameEq = (a, b) => { a=normName(a); b=normName(b); return a===b || a.replace(/s$/,"")===b.replace(/s$/,""); };
 const keyWord = n => { const w=normName(n).split(" ").filter(x => x.length>2 && !GENERIC.has(x)); return (w.sort((a,b) => b.length-a.length)[0]) || normName(n).split(" ").filter(x => x!=="the")[0]; };
-const rcpNames = r => r.recipe.flatMap(it => typeof it==="string" ? it.split("|") : it.in ? it.in.split("|") : []);
-const centreMaps = {};
+const itName = it => typeof it==="string" ? it : (it.in || it.via || "");
+const rcpNames = r => r.recipe.flatMap(it => itName(it) ? itName(it).split("|") : []);
+const centreMaps = {}, STREETS_V = "ttr-streets-v1-";
+// Street shapes for one centre, from OpenStreetMap. Saved on the phone after the first success.
 async function centreStreets(cid){
   if(centreMaps[cid]) return centreMaps[cid];
-  const C = CENTRES[cid], names = new Set();
-  ROUTES.filter(r => r.centre===cid && r.recipe).forEach(r => rcpNames(r).forEach(n => names.add(n)));
+  const C = CENTRES[cid], o = mkO((C.bbox[0]+C.bbox[2])/2, (C.bbox[1]+C.bbox[3])/2);
+  const names = new Set(); ROUTES.filter(r => r.centre===cid && r.recipe).forEach(r => rcpNames(r).forEach(n => names.add(n)));
   if(C.startStreet) names.add(C.startStreet);
+  const revive = d => ({o, ways: d.ways.map(w => ({name:w.n, pts:w.p.map(([la,lo]) => ({lat:la, lon:lo, ...pxy(o,la,lo)}))})), startPt: d.sp ? {lat:d.sp[0], lon:d.sp[1], ...pxy(o,d.sp[0],d.sp[1])} : null});
+  const cached = store.get(STREETS_V+cid, null);
+  if(cached && cached.names===[...names].sort().join("|")) return centreMaps[cid] = revive(cached);
   const words = [...new Set([...names].map(keyWord).filter(Boolean))].map(w => w.replace(/[^a-z0-9 ]/g,""));
   const bb = C.bbox.join(","), place = C.startName ? `nwr["name"~"${C.startName}",i](${bb});` : "";
-  const j = await overpass(`[out:json][timeout:30];(way["highway"]["name"~"(${words.join("|")})",i](${bb});${place});out geom;`, null, 30000);
-  const o = mkO((C.bbox[0]+C.bbox[2])/2, (C.bbox[1]+C.bbox[3])/2), ways=[]; let startPt=null;
-  for(const e of j.elements||[]){
-    const g = e.geometry || []; if(!g.length) continue;
-    if(e.tags && e.tags.highway) ways.push({name:e.tags.name, pts:g.map(q => ({lat:q.lat, lon:q.lon, ...pxy(o,q.lat,q.lon)}))});
-    else if(C.startName && e.tags && new RegExp(C.startName,"i").test(e.tags.name||"")){ const la=g.reduce((a,q)=>a+q.lat,0)/g.length, lo=g.reduce((a,q)=>a+q.lon,0)/g.length; startPt={lat:la, lon:lo, ...pxy(o,la,lo)}; }
+  try{
+    const j = await overpass(`[out:json][timeout:40];(way["highway"]["name"~"(${words.join("|")})",i](${bb});${place});out geom;`, null, 45000);
+    const keep=[]; let sp=null;
+    for(const e of j.elements||[]){
+      const g = e.geometry || []; if(!g.length || !e.tags) continue;
+      if(e.tags.highway){ if([...names].some(n => nameEq(e.tags.name, n))) keep.push({n:e.tags.name, p:g.map(q => [+q.lat.toFixed(6), +q.lon.toFixed(6)])}); }
+      else if(C.startName && new RegExp(C.startName,"i").test(e.tags.name||"")) sp = [g.reduce((a,q)=>a+q.lat,0)/g.length, g.reduce((a,q)=>a+q.lon,0)/g.length];
+    }
+    const d = {names:[...names].sort().join("|"), ways:keep, sp};
+    try{ store.set(STREETS_V+cid, d); }catch(e){}
+    return centreMaps[cid] = revive(d);
+  }catch(e){
+    return centreMaps[cid] = {o, ways:[], startPt:null, failed:true};   // the route can still be built from TomTom below
   }
-  return centreMaps[cid] = {o, ways, startPt};
+}
+// TomTom fallback: junctions ("A & B") and streets, found near where we are. Answers are kept on the phone.
+const ttGeoCache = store.get("ttr-ttgeo-v1", {});
+async function ttFind(q, idx, near, C){
+  const key = idx+"|"+q;
+  let res = ttGeoCache[key];
+  if(!res){
+    if(!ttKey()) return [];
+    const c = near || {lat:(C.bbox[0]+C.bbox[2])/2, lon:(C.bbox[1]+C.bbox[3])/2};
+    try{
+      const r = await fetchT(`https://api.tomtom.com/search/2/search/${encodeURIComponent(q)}.json?key=${encodeURIComponent(ttKey())}&countrySet=IE&lat=${c.lat.toFixed(5)}&lon=${c.lon.toFixed(5)}&radius=6000&limit=8&idxSet=${idx}&language=en-GB`, {}, 9000);
+      if(!r.ok) return [];
+      res = ((await r.json()).results||[]).map(x => ({lat:x.position.lat, lon:x.position.lon, type:x.type, street:(x.address||{}).streetName||""}));
+      ttGeoCache[key] = res; try{ store.set("ttr-ttgeo-v1", ttGeoCache); }catch(e){}
+    }catch(e){ return []; }
+  }
+  const [s,w,n,e] = C.bbox;
+  return res.filter(x => x.lat > s-.01 && x.lat < n+.01 && x.lon > w-.015 && x.lon < e+.015);
+}
+const closest = (list, near) => !list.length ? null : !near ? list[0] : list.reduce((a,b) => hav(a.lat,a.lon,near.lat,near.lon) <= hav(b.lat,b.lon,near.lat,near.lon) ? a : b);
+async function ttCross(A, B, near, C){
+  for(const a of A.split("|")) for(const b of B.split("|")){
+    const l = (await ttFind(`${a} & ${b}`, "Xstr", near, C)).filter(x => /cross/i.test(x.type||"") || (normName(x.street).includes(keyWord(a)) && normName(x.street).includes(keyWord(b))));
+    if(l.length) return closest(l, near);
+  }
+  return null;
+}
+async function ttStreet(name, near, C){
+  for(const n of name.split("|")){
+    const l = (await ttFind(n, "Str", near, C)).filter(x => nameEq(x.street, n));
+    if(l.length) return closest(l, near);
+  }
+  return null;
 }
 function streetPolys(M, want){
   for(const alt of String(want).split("|")){ const ps = M.ways.filter(w => nameEq(w.name, alt)).map(w => w.pts); if(ps.length) return ps; }
@@ -1452,35 +1508,56 @@ async function compileRecipe(route){
   const cached = store.get(RCP_V+route.id, null);
   if(cached){ route.stops=cached.stops; route.rcp=cached.rcp; return; }
   const C = CENTRES[route.centre], M = await centreStreets(route.centre), o = M.o;
-  let start = C.start ? {lat:C.start[0], lon:C.start[1], ...pxy(o,C.start[0],C.start[1])} : M.startPt;
-  if(!start && C.startStreet){ const P=streetPolys(M, C.startStreet); if(P){ const ps=P[0]; start = ps[Math.floor(ps.length/2)]; } }
-  const wps=[], mv=[], hills=[], missing=[];
+  const xy = p => p && ({...p, ...pxy(o, p.lat, p.lon)});
+  let start = C.start ? xy({lat:C.start[0], lon:C.start[1]}) : M.startPt;
+  if(!start && C.startStreet){ const P=streetPolys(M, C.startStreet); if(P){ const ps=P[0]; start = ps[Math.floor(ps.length/2)]; } else start = xy(await ttStreet(C.startStreet, null, C)); }
+  if(!start && C.startName) start = xy(closest(await ttFind(C.addr, "POI,PAD,Addr", null, C), null));
+  const wps=[], mv=[], hills=[], missing=[]; let viaTT = 0;
   const push = (v, label) => { const p=ll(o,v); const last=wps[wps.length-1]; if(last && Math.hypot(last.x-p.x, last.y-p.y) < 12) return wps.length-1; wps.push({...p, label}); return wps.length-1; };
-  if(start) push(start, CENTRES[route.centre].name);
+  if(start) push(start, C.name);
   let cur=null, curName="";
   for(const it of route.recipe){
     const last = wps[wps.length-1], prev = wps[wps.length-2];
-    if(it.hill){ hills.push(wps.length-1); continue; }
-    if(it.mv && !it.in){ if(cur && last){ const v=pointAlong(cur, last, prev); if(v) mv.push({i:push(v, curName), type:it.mv}); } continue; }
-    const name = it.in || it, P = streetPolys(M, name);
-    if(!P){ missing.push(String(name).split("|")[0]); continue; }
-    if(!cur){ if(!last){ const ps=P[0]; push(ps[0], name); } cur=P; curName=String(name).split("|")[0]; continue; }
-    const J = junctionOf(cur, P, last);
-    if(it.in){
-      const base = J || nearestOnPolys(P, last);
-      const v = base && pointInto(P, base) || base;
-      if(v) mv.push({i:push(v, it.in.split("|")[0]), type:it.mv});
-      continue;                                     // back out onto the same street
+    if(it.hill && !it.via){ hills.push(wps.length-1); continue; }
+    if(it.mv && !it.in && !it.via){ if(cur && last){ const v=pointAlong(cur, last, prev); if(v) mv.push({i:push(v, curName), type:it.mv}); } else if(last) mv.push({i:wps.length-1, type:it.mv}); continue; }
+    const name = itName(it), short = name.split("|")[0], P = streetPolys(M, name);
+    // ----- found on OpenStreetMap -----
+    if(P){
+      if(it.via){                                       // pass along this street (needn't meet the last one)
+        const v = last ? nearestOnPolys(P, last) : P[0][0], i = v && push(v, short);
+        if(i!=null){ if(it.mv) mv.push({i, type:it.mv}); if(it.hill) hills.push({k:i, at:1}); }
+        cur=P; curName=short; continue;
+      }
+      if(!last){ push(P[0][0], short); cur=P; curName=short; continue; }
+      if(!cur && !curName){ cur=P; curName=short; continue; }
+      const J = cur ? junctionOf(cur, P, last) : null;
+      if(it.in){
+        const base = J || nearestOnPolys(P, last), v = base && pointInto(P, base) || base;
+        if(v) mv.push({i:push(v, short), type:it.mv});
+        continue;                                       // back out onto the same street
+      }
+      if(J) push(J, name);
+      else { const tj = curName && await ttCross(curName, name, last, C); if(tj){ push(xy(tj), name); viaTT++; } else { const n = nearestOnPolys(P, last); if(n) push(n, name); } }
+      cur=P; curName=short; continue;
     }
-    if(J) push(J, name);
-    else { const n = last && nearestOnPolys(P, last); if(n) push(n, name); missing.push(String(name).split("|")[0]+" (junction)"); }
-    cur=P; curName=String(name).split("|")[0];
+    // ----- not on OpenStreetMap (or it's down): TomTom -----
+    const near = last || null;
+    let pt = null;
+    if(!it.in && !it.via && curName) pt = await ttCross(curName, name, near, C);
+    if(!pt) pt = await ttStreet(name, near, C);
+    if(!pt){ missing.push(short); continue; }
+    viaTT++;
+    const i = push(xy(pt), short);
+    if(it.mv) mv.push({i, type:it.mv});
+    if(it.hill) hills.push({k:i, at:1});
+    if(!it.in){ cur=null; curName=short; }
   }
-  if(start) push(start, CENTRES[route.centre].name);
-  if(wps.length < 3) throw new Error("recipe: too few points");
+  if(start) push(start, C.name);
+  if(wps.length < 3) throw new Error("recipe: too few points ("+missing.length+" streets not found"+(M.failed ? ", map data unavailable" : "")+")");
   route.stops = wps.map(w => [+w.lat.toFixed(7), +w.lon.toFixed(7), w.label]);
-  route.rcp = {mv, hills, missing};
-  store.set(RCP_V+route.id, {stops:route.stops, rcp:route.rcp});
+  route.rcp = {mv, hills, missing, tt:viaTT, osm:!M.failed};
+  // Only keep it if most of it came out right; otherwise try again next time.
+  if(missing.length <= 2) store.set(RCP_V+route.id, {stops:route.stops, rcp:route.rcp});
 }
 
 // =====================================================================
@@ -1511,7 +1588,8 @@ function applyManoeuvres(route){
   const e = mvEdits[route.id] || {}, list=[];
   const found = route.rcp ? [
       ...route.rcp.mv.map((m,n) => ({key:"f"+n, along:route.stopAlong[m.i], guess:m.type})),
-      ...route.rcp.hills.map((k,n) => ({key:"h"+n, along: k+1 < route.stopAlong.length ? (route.stopAlong[k]+route.stopAlong[k+1])/2 : route.stopAlong[k], guess:"hill"}))
+      ...route.rcp.hills.map((h,n) => { const k = typeof h==="object" ? h.k : h, at = typeof h==="object" && h.at;
+        return {key:"h"+n, along: !at && k+1 < route.stopAlong.length ? (route.stopAlong[k]+route.stopAlong[k+1])/2 : route.stopAlong[k], guess:"hill"}; })
     ].filter(m => m.along!=null) : detectManoeuvres(route);
   for(const m of found){
     const type = (e.auto||{})[m.key] || m.guess;
@@ -1589,7 +1667,7 @@ function renderCentres(){
 }
 function routeMeta(r){
   if(r.building) return t("rcBuilding");
-  if(r.recipe && r.buildFail && !r.pts) return t("rcFail");
+  if(r.recipe && r.buildFail && !r.pts) return t("rcFail") + (r.buildErr ? " ("+r.buildErr+")" : "");
   const km = r.total ? num(r.total/1000,1)+" km" : "…";
   const first = r.recipe ? `${r.mv ? t("cnt_mv",{n:r.mv.length}) : t("stepsN",{n:r.recipe.length})}` : t("stopsN",{n:r.stops.length-2});
   return `${first} · ${km}${r.ok===false?" · "+t("straight"):""} · ${t("drivenN",{n:(log[r.id]||[]).length})}`;
@@ -1609,11 +1687,27 @@ function renderRoutes(){
 function renderIntel(){
   const r=practice, box=$("intel");
   if(!r || !r.pts){ box.innerHTML=""; $("routeSheet").innerHTML=""; return; }
-  box.innerHTML = r.intel==="busy" ? `<span class="empty">${t("intelLoading")}</span>` : r.intel==="fail" ? `<span class="empty">${t("intelNone")}</span>` : intelChips(r);
+  box.innerHTML = (r.intel==="busy" ? `<span class="empty">${t("intelLoading")}</span>` : r.intel==="fail" ? `<span class="empty">${t("intelNone")}</span>` : intelChips(r)) + dataStatus(r);
   $("sheetToggle").innerHTML = `${ico("route")}${sheetOpen ? t("hideSheet") : t("showSheet")}`;
   $("routeSheet").hidden = !sheetOpen;
   if(sheetOpen) renderSheet(r);
 }
+// Which data loaded for this route, so problems are visible instead of silent.
+function dataStatus(r){
+  const st = (ok, busy) => busy ? "…" : ok ? "✓" : "✗";
+  const tt = st(r.ttlState==="ok", r.ttlState==="busy" || r.ttlState==null && !!ttKey());
+  const osm = st(r.intel==="ok" && r.lim && r.lim.length, r.intel==="busy" || r.intel==null);
+  const n = (r.limits||[]).length, bad = r.ttlState!=="ok" && !(r.lim && r.lim.length) && r.intel!=="busy" && r.ttlState!=="busy";
+  return `<div class="dstat ${bad?"bad":""}"><span>${esc(t("dsLimits"))}: TomTom ${tt} · OpenStreetMap ${osm}${n ? " · "+esc(t("dsChanges",{n})) : ""}</span>`
+    + (bad || r.intel==="fail" ? `<button type="button" class="link" id="dsRetry">${esc(t("retry"))}</button>` : "") + `</div>`;
+}
+document.addEventListener("click", async e => {
+  if(!e.target.closest("#dsRetry") || !practice) return;
+  const r = practice; store.set(INTEL_V+r.id+"-"+Math.round(r.total), null); store.set(TTL_V+r.id+"-"+Math.round(r.total), null);
+  r.intel="busy"; r.ttlState="busy"; renderIntel();
+  await loadIntel(r, r.id+"-"+Math.round(r.total)); renderIntel();
+  await loadRouteLimits(r, r.id+"-"+Math.round(r.total)); renderIntel(); if(tab==="test" && !S) drawRoute(r, false);
+});
 function renderSheet(r){
   const rows = (r.steps||[]).map(s => ({along:s.along, html:`<span class="rsi ${s.icon}">${s.icon==="rb" ? `<b>${s.exit||""}</b>` : s.icon==="flag" ? ico("flag") : s.icon==="mv" ? ico(MV_IC[s.mvType] || "uturn") : `<span style="display:inline-flex;transform:rotate(${s.deg||0}deg)">${ico("arrow")}</span>`}</span><div><b>${esc(s.text)}</b><small>${t("atKm",{d:fmtDist(s.along)})}</small></div>`}));
   (r.hz||[]).forEach(h => rows.push({along:h.along, html:`<span class="rsi hz" style="--c:${HZ_COL[h.type]}">${ico(h.type)}</span><div><b class="dim">${esc(t("hz_"+h.type))}</b><small>${t("atKm",{d:fmtDist(h.along)})}</small></div>`}));
@@ -1621,7 +1715,10 @@ function renderSheet(r){
   rows.sort((a,b) => a.along-b.along);
   let desc = "";
   if(r.recipe){
-    const items = r.recipe.map(it => typeof it==="string" ? t("rcOnto",{s:it.split("|")[0]}) : it.in ? `<b>${esc(t("rcIn_"+it.mv,{s:it.in.split("|")[0]}))}</b>` : it.hill ? `<b>${esc(t("rcHill"))}</b>` : `<b>${esc(t("rcTurnHere"))}</b>`);
+    const items = r.recipe.map(it => typeof it==="string" ? t("rcOnto",{s:it.split("|")[0]})
+      : it.in ? `<b>${esc(t("rcIn_"+(it.mv||"turn"),{s:it.in.split("|")[0]}))}</b>`
+      : it.via ? (it.mv || it.hill ? `<b>${esc(t(it.hill ? "rcHillOn" : "rcAt_"+it.mv, {s:it.via.split("|")[0]}))}</b>` : t("rcVia",{s:it.via.split("|")[0]}))
+      : it.hill ? `<b>${esc(t("rcHill"))}</b>` : `<b>${esc(t("rcTurnHere"))}</b>`);
     desc = `<ol class="rdesc">${items.map(x => `<li>${x.startsWith("<b>") ? x : esc(x)}</li>`).join("")}</ol>`
       + (r.rcp && r.rcp.missing.length ? `<p class="note warnnote">${esc(t("rcMissing",{s:r.rcp.missing.join(", ")}))}</p>` : "")
       + `<p class="note">${esc(t("rcSrc",{s:r.src}))} <a href="${esc(r.srcUrl)}" target="_blank" rel="noopener">${esc(hostOf(r.srcUrl))}</a></p>`;
@@ -1633,6 +1730,8 @@ $("routeList").addEventListener("click", e => {
   const b = e.target.closest("[data-id]"); if(!b) return;
   practice = ROUTES.find(r => r.id===+b.dataset.id); store.set("ttr-last", practice.id);
   renderRoutes(); if(practice.pts) drawRoute(practice);
+  if(practice.buildFail){ if(centreMaps[practice.centre] && centreMaps[practice.centre].failed) delete centreMaps[practice.centre]; centreLoaded[practice.centre]=null; loadCentre(practice.centre); }
+  else routeData(practice);
 });
 $("driveBtn").onclick = () => startSession(practice, "gps");
 $("rehearseBtn").onclick = () => startSession(practice, "sim");
@@ -1805,8 +1904,9 @@ $("muteBtn").onclick = () => {
 // Speed limits
 // =====================================================================
 const SL = {limit:null, lastAt:0, lastPos:null, busy:false, setAt:null, src:null};
-function setLimit(lim, announce, pos){
+function setLimit(lim, announce, pos, src){
   if(pos) SL.setAt = {lat:pos.lat, lon:pos.lon};
+  if(src) SL.src = src;
   if(!lim) return;
   if(SL.limit && SL.limit.v===lim.v && SL.limit.u===lim.u){ showLimit(); return; }
   SL.limit = {v:lim.v, u:lim.u, kmh:lim.kmh}; showLimit();
@@ -1818,6 +1918,7 @@ function showLimit(){
   const here0 = S && S.lastFix, stale = !!(SL.limit && SL.setAt && here0 && hav(SL.setAt.lat,SL.setAt.lon,here0.lat,here0.lon) > 1500);
   el.classList.toggle("unknown", !SL.limit); el.classList.toggle("stale", stale);
   el.innerHTML = SL.limit ? `${SL.limit.v}${SL.limit.u==="mph"?"<small>mph</small>":""}` : "–";
+  el.dataset.src = SL.limit && SL.src ? t("lsrc_"+SL.src) : "";
 }
 function parseTTLimit(v){ const m=String(v||"").match(/([\d.]+)\s*(KPH|MPH)/i); if(!m) return null; const n=Math.round(+m[1]), mph=/mph/i.test(m[2]); return n ? {v:n, u:mph?"mph":"km/h", kmh: mph ? n*1.609 : n} : null; }
 // TomTom: the limit of the road at a point (direction-aware). One request, so it's only used where the route has no data.
@@ -1830,7 +1931,7 @@ async function ttLimitAt(f, hdg){
 }
 // OpenStreetMap: the nearest road with a maxspeed tag, preferring roads that run in our direction.
 async function osmLimitAt(f, hdg){
-  const j = await overpass(`[out:json][timeout:8];way(around:25,${f.lat},${f.lon})["highway"]["maxspeed"];out tags geom 8;`, null, 9000);
+  const j = await overpassNow(`[out:json][timeout:8];way(around:25,${f.lat},${f.lon})["highway"]["maxspeed"];out tags geom 8;`, null, 9000);
   const o = mkO(f.lat, f.lon), p0={x:0,y:0}; let best=null;
   for(const w of j.elements||[]){
     const g=(w.geometry||[]).map(q => pxy(o,q.lat,q.lon));
@@ -1846,12 +1947,12 @@ async function osmLimitAt(f, hdg){
 async function checkLimit(f, hdg){
   if(!settings.limits || SL.busy) return;
   const since = Date.now()-SL.lastAt, moved = SL.lastPos ? hav(SL.lastPos.lat,SL.lastPos.lon,f.lat,f.lon) : 1e9;
-  if(since < 6000 || (moved < 90 && since < 45000)) return;
+  if(since < 4000 || (moved < 60 && since < 30000)) return;
   SL.busy=true; SL.lastAt=Date.now(); SL.lastPos={lat:f.lat, lon:f.lon};
   try{
-    let lim = await ttLimitAt(f, hdg).catch(() => null);
-    if(!lim) lim = await osmLimitAt(f, hdg).catch(() => null);
-    if(S && lim) setLimit(lim, true, f);
+    let lim = await ttLimitAt(f, hdg).catch(() => null), src = "tt";
+    if(!lim){ lim = await osmLimitAt(f, hdg).catch(() => null); src = "osm"; }
+    if(S && lim) setLimit(lim, true, f, src);
   } finally { SL.busy=false; }
 }
 // TomTom speed limits for a whole route, rebuilt along our own line so they line up exactly.
@@ -1861,16 +1962,23 @@ async function ttRouteLimits(route){
   for(let i=0;i<pts.length;i+=step) sp.push({latitude:+pts[i].lat.toFixed(6), longitude:+pts[i].lon.toFixed(6)});
   const last=pts[pts.length-1]; if((pts.length-1) % step) sp.push({latitude:+last.lat.toFixed(6), longitude:+last.lon.toFixed(6)});
   const a=pts[0], k=encodeURIComponent(ttKey()), q=`json?key=${k}&travelMode=car&sectionType=speedLimit&routeRepresentation=polyline&traffic=false`;
-  let j=null;
+  const hasLim = x => x && x.routes && x.routes[0] && (x.routes[0].sections||[]).some(z => /speed_?limit/i.test(z.sectionType||""));
+  let j=null, why="";
   try{
     const res = await fetchT(`https://api.tomtom.com/routing/1/calculateRoute/${a.lat.toFixed(6)},${a.lon.toFixed(6)}:${last.lat.toFixed(6)},${last.lon.toFixed(6)}/${q}`,
       {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({supportingPoints:sp})}, 15000);
-    if(res.ok) j = await res.json();
-  }catch(e){}
-  if(!j && route.stops && route.stops.length > 2){                // plan B: route through the stops
-    const res = await fetchT(`https://api.tomtom.com/routing/1/calculateRoute/${route.stops.map(s => s[0].toFixed(6)+","+s[1].toFixed(6)).join(":")}/${q}`, {}, 15000);
-    if(res.ok) j = await res.json();
+    if(res.ok) j = await res.json(); else why = "POST "+res.status;
+  }catch(e){ why = "POST "+(e.message||e); }
+  // plan B: route through points along our line (TomTom allows up to 150), so it follows the same roads
+  if(!hasLim(j)){
+    const pick=[], n=Math.min(60, Math.max(2, route.stops && route.stops.length || 0)), stepB=Math.max(1, Math.floor(pts.length/n));
+    for(let i=0;i<pts.length;i+=stepB) pick.push(pts[i]); pick.push(last);
+    try{
+      const res = await fetchT(`https://api.tomtom.com/routing/1/calculateRoute/${pick.map(p => p.lat.toFixed(6)+","+p.lon.toFixed(6)).join(":")}/${q}`, {}, 20000);
+      if(res.ok){ const j2 = await res.json(); if(hasLim(j2)) j = j2; } else why += " · GET "+res.status;
+    }catch(e){ why += " · GET "+(e.message||e); }
   }
+  route.ttlWhy = why;
   const rt = j && j.routes && j.routes[0]; if(!rt) return null;
   const tp = (rt.legs||[]).flatMap(l => l.points||[]);
   const secs = (rt.sections||[]).filter(x => /speed_?limit/i.test(x.sectionType||"") && x.maxSpeedLimitInKmh).sort((x,y) => x.startPointIndex-y.startPointIndex);
@@ -1896,25 +2004,53 @@ async function ttRouteLimits(route){
 }
 const TTL_V = "ttr-ttl-v1-";
 async function loadRouteLimits(route, cacheKey){
-  if(cacheKey){ const c=store.get(TTL_V+cacheKey, null); if(c && Date.now()-c.at < 14*864e5){ route.ttl=c.segs; buildLimits(route); return; } }
+  if(cacheKey){ const c=store.get(TTL_V+cacheKey, null); if(c && Date.now()-c.at < 14*864e5){ route.ttl=c.segs; route.ttlState="ok"; buildLimits(route); return; } }
+  route.ttlState="busy";
   try{
     const segs = await ttRouteLimits(route);
-    if(segs){ route.ttl=segs; buildLimits(route); if(cacheKey) store.set(TTL_V+cacheKey, {at:Date.now(), segs}); }
-  }catch(e){}
+    if(segs){ route.ttl=segs; route.ttlState="ok"; buildLimits(route); if(cacheKey) store.set(TTL_V+cacheKey, {at:Date.now(), segs}); }
+    else route.ttlState="none";
+  }catch(e){ route.ttlState="fail"; route.ttlWhy = String(e.message||e); }
 }
 // One limit profile per route: TomTom where it has data, OpenStreetMap to fill the gaps.
 function segAt(list, along){ if(!list) return null; for(const sg of list){ if(sg.from-5 <= along && along <= sg.to+40) return sg; if(sg.from > along+5) break; } return null; }
+let limFix = store.get("ttr-limfix", {});
+const fixAt = (route, a) => (limFix[route.id]||[]).find(f => a >= f.from && a <= f.to) || null;
 function buildLimits(route){
-  if(!route.ttl && !route.lim){ route.limits=null; return; }
+  const fx = limFix[route.id];
+  if(!route.ttl && !route.lim && !(fx && fx.length)){ route.limits=null; return; }
   const out=[]; let cur=null;
   for(let s=0; s<=route.total; s+=20){
-    const sg = segAt(route.ttl, s) || segAt(route.lim, s);
+    const f = fixAt(route, s);
+    const sg = (f && {v:f.v, u:"km/h", kmh:f.v}) || segAt(route.ttl, s) || segAt(route.lim, s);
     if(!sg){ cur=null; continue; }
     if(cur && cur.v===sg.v && cur.u===sg.u) cur.to=s;
     else { cur={from:s, to:s, v:sg.v, u:sg.u, kmh:sg.kmh}; out.push(cur); }
   }
   route.limits = out.length ? out : null;
 }
+
+// Tap the speed sign while driving to correct it. On a test route it's remembered for that stretch (between turns).
+function limitPick(){
+  if(!S || S.route.profile==="bike") return;
+  const box=$("limPick"); box.hidden = !box.hidden; if(box.hidden) return;
+  const d = $("dial").getBoundingClientRect(); box.style.bottom = (innerHeight - d.top + 10) + "px";
+  box.innerHTML = [30,50,60,80,100,120].map(v => `<button type="button" data-lim="${v}">${v}</button>`).join("") + `<button type="button" data-lim="0" class="clr">${esc(t("limClear"))}</button>`;
+}
+$("limitSign").addEventListener("click", limitPick);
+$("limPick").addEventListener("click", e => {
+  const b=e.target.closest("[data-lim]"); if(!b || !S) return;
+  const v=+b.dataset.lim, r=S.route; $("limPick").hidden=true;
+  if(!r.isDest && r.steps && r.pts){
+    const pr=S.progress, prev=[...r.steps].reverse().find(st => st.along <= pr+5), next=r.steps.find(st => st.along > pr+5);
+    const from = prev ? prev.along : 0, to = next ? next.along : r.total;
+    const list = (limFix[r.id] = (limFix[r.id]||[]).filter(f => f.to < from || f.from > to));
+    if(v) list.push({from, to, v});
+    store.set("ttr-limfix", limFix); buildLimits(r);
+  }
+  if(v){ SL.limit=null; setLimit({v, u:"km/h", kmh:v}, false, S.lastFix, "you"); toast(t("limSaved",{n:v})); }
+  else { SL.limit=null; SL.lastAt=0; showLimit(); toast(t("limCleared")); }
+});
 
 // =====================================================================
 // Driving session
@@ -2411,7 +2547,7 @@ function finishFix(f, kmh, hdg, r, onRoute){
   }
   // Route data first (TomTom + OpenStreetMap); anywhere it has a gap, ask live. The last limit stays until a new one is known.
   const L0 = onRoute ? limitAt(r, S.progress) : null;
-  if(L0) setLimit(L0, true, f); else checkLimit(f, hdg);
+  if(L0) setLimit(L0, true, f, fixAt(r, S.progress) ? "you" : segAt(r.ttl, S.progress) ? "tt" : "osm"); else checkLimit(f, hdg);
   showLimit();
   const over = kmh!=null && SL.limit && kmh > SL.limit.kmh + 3;
   S.overN = over ? S.overN+1 : 0;
@@ -2692,7 +2828,7 @@ function applyLang(){
 // =====================================================================
 // Boot
 // =====================================================================
-const APP_V = 16;
+const APP_V = 17;
 // Shows which version is running, and reports script errors on screen so problems on the phone are visible.
 $("appVer").textContent = "Drive Ireland · v" + APP_V;
 window.addEventListener("error", e => { if(/\/(app|data|theory)\.js/.test(e.filename||"")) toast("Error: " + (e.message||"") + " (" + (e.filename||"").split("/").pop().split("?")[0] + ":" + e.lineno + ")", 8000); });
@@ -2718,19 +2854,23 @@ async function loadCentre(cid){
     for(const r of list){
       if(r.pts) continue;
       try{ await loadRoute(r); r.buildFail=false; }
-      catch(e){ failed++; if(r.recipe && !(r.stops && r.stops.length)){ r.buildFail=true; } else fallbackRoute(r); }
+      catch(e){ failed++; if(r.recipe && !(r.stops && r.stops.length)){ r.buildFail=true; r.buildErr=String(e.message||e); } else fallbackRoute(r); }
       renderRoutes();
       if(r===practice && tab==="test" && !S && r.pts) drawRoute(r);
     }
     if(cid===centre) $("loadState").textContent = failed ? t("someOffline") : "";
     if(failed) centreLoaded[cid] = null;                       // try again next time
-    for(const r of list){
-      if(!r.ok) continue;
-      await loadIntel(r, r.id+"-"+Math.round(r.total));
-      if(r===practice){ renderIntel(); if(tab==="test" && !S) drawRoute(r, false); }
-    }
-    for(const r of list){ if(r.ok){ await loadRouteLimits(r, r.id+"-"+Math.round(r.total)); if(r===practice) renderIntel(); } }
+    if(practice && practice.centre===cid) await routeData(practice);
   })();
+}
+// Hazards and speed limits for one route: loaded when you pick it (not all at once).
+async function routeData(r){
+  if(!r || !r.pts || r.dataBusy) return;
+  r.dataBusy = true;
+  try{
+    if(r.intel!=="ok"){ await loadIntel(r, r.id+"-"+Math.round(r.total)); if(r===practice){ renderIntel(); if(tab==="test" && !S) drawRoute(r, false); } }
+    if(r.ttlState!=="ok"){ await loadRouteLimits(r, r.id+"-"+Math.round(r.total)); if(r===practice) renderIntel(); }
+  } finally { r.dataBusy = false; }
 }
 $("centreSeg").addEventListener("click", e => {
   const b = e.target.closest("[data-centre]"); if(!b || b.dataset.centre===centre) return;

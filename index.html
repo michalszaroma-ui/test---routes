@@ -144,6 +144,11 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 .rdesc{margin:4px 0 8px;padding-left:22px;font-size:13px;line-height:1.55;color:var(--text)}.rdesc b{color:#c9bcff;font-weight:600}
 .warnnote{color:var(--amber)}
 .mvm.hill{background:#2e9d6a}
+.limpick{position:fixed;left:var(--sl);z-index:1100;display:grid;grid-template-columns:repeat(4,52px);gap:6px;padding:10px;border-radius:18px;background:var(--glass-2);border:1px solid var(--edge-2);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
+.limpick button{height:52px;border-radius:50%;background:#fff;color:#111;border:6px solid var(--red);font:800 17px/1 var(--display)}
+.limpick .clr{grid-column:span 2;border-radius:14px;border:1px solid var(--edge-2);background:var(--card);color:var(--text);font:600 13px/1 var(--body)}
+#limitSign{cursor:pointer}#limitSign[data-src]:not([data-src=""])::after{content:attr(data-src);position:absolute;left:50%;bottom:-15px;transform:translateX(-50%);font:600 9px/1 var(--body);color:var(--muted);white-space:nowrap;letter-spacing:.04em}
+.dstat{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:8px 2px 2px;font-size:12px;color:var(--muted)}.dstat.bad{color:var(--amber)}.dstat .link{font-size:12px;padding:0}
 .appver{color:var(--dim);font-size:11.5px;text-align:center;margin:8px 0 0}
 .mvm{width:30px;height:30px;border-radius:10px;display:grid;place-items:center;background:var(--violet);color:#fff;border:2px solid #fff;box-shadow:0 0 14px rgba(143,124,255,.85)}
 .mvm svg{width:18px;height:18px;stroke-width:2.4}
@@ -553,6 +558,7 @@ body.riding .sicon{color:var(--green)}
 <body data-map="dark">
 <div id="map" aria-label="Map"></div>
 
+<div class="limpick" id="limPick" hidden></div>
 <div id="hud" hidden>
   <div id="sign" class="sign" role="status" aria-live="polite">
     <div class="sicon" id="signIcon"></div>
@@ -793,8 +799,8 @@ body.riding .sicon{color:var(--green)}
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate.js"></script>
-<script src="data.js?v=16"></script>
-<script src="app.js?v=16"></script>
-<script src="theory.js?v=16"></script>
+<script src="data.js?v=17"></script>
+<script src="app.js?v=17"></script>
+<script src="theory.js?v=17"></script>
 </body>
 </html>
